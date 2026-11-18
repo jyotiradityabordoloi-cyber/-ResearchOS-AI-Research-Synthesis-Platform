@@ -4,7 +4,6 @@ import { useMutation } from "@tanstack/react-query";
 import {
   ArrowRightLeft,
   BadgeCheck,
-  ChevronDown,
   ChevronRight,
   CircleHelp,
   Flag,
@@ -164,7 +163,9 @@ export function ThemeCard({
   allThemes = [],
   selected = false,
   onSelect,
+  index = 0,
 }: {
+  index?: number;
   theme: Theme;
   allThemes?: Theme[];
   selected?: boolean;
@@ -180,7 +181,14 @@ export function ThemeCard({
   const rejected = theme.status === "rejected";
 
   return (
-    <Card className={cn("gap-0 py-0 shadow-xs", selected && "ring-2 ring-primary", rejected && "opacity-70")}>
+    <Card
+      className={cn(
+        "enter gap-0 py-0 shadow-xs transition-[box-shadow,opacity] duration-200",
+        selected && "ring-2 ring-primary",
+        rejected && "opacity-70",
+      )}
+      style={{ "--i": index } as React.CSSProperties}
+    >
       <div className="space-y-3 px-5 py-4">
         <div className="flex items-start gap-3">
           {onSelect && !rejected ? (
@@ -233,7 +241,7 @@ export function ThemeCard({
               role="img"
               aria-label={`${percent(theme.frequency)} of participants`}
             >
-              <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(2, theme.frequency * 100)}%` }} />
+              <div className="bar-fill h-full rounded-full bg-primary" style={{ width: `${Math.max(2, theme.frequency * 100)}%` }} />
             </div>
           </div>
           <Metric label="Severity" value={`${theme.severity}/5`} />
@@ -276,12 +284,12 @@ export function ThemeCard({
           onClick={() => setOpen(!open)}
           aria-expanded={open}
         >
-          {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+          <ChevronRight className={cn("size-4 transition-transform duration-200 ease-out-strong", open && "rotate-90")} />
           Evidence · {supporting.length} supporting
           {contradicting.length ? ` · ${contradicting.length} contradicting` : ""}
         </Button>
         {open ? (
-          <div className="grid gap-6 px-5 pb-5 lg:grid-cols-2">
+          <div className="reveal grid gap-6 px-5 pb-5 lg:grid-cols-2">
             <section className="space-y-3">
               <h4 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Supporting</h4>
               <ul className="space-y-4">

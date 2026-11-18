@@ -53,11 +53,11 @@ function FacetSelect({
   );
 }
 
-function HitCard({ hit }: { hit: RepositoryHit }) {
+function HitCard({ hit, index }: { hit: RepositoryHit; index: number }) {
   const supporting = hit.evidence.filter((e) => e.stance === "supporting");
   const contradicting = hit.evidence.filter((e) => e.stance === "contradicting");
   return (
-    <Card className="gap-3 px-5 py-4 shadow-xs">
+    <Card className="enter gap-3 px-5 py-4 shadow-xs" style={{ "--i": index } as React.CSSProperties}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 space-y-1">
           <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -197,7 +197,7 @@ export function RepositoryView() {
                 title={m.hint}
                 onClick={() => setMode(m.value)}
                 className={cn(
-                  "rounded-md px-3 py-1.5 text-sm transition-colors",
+                  "rounded-md px-3 py-1.5 text-sm transition-[color,background-color,transform] duration-150 ease-out active:scale-[0.97]",
                   mode === m.value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
                 )}
               >
@@ -259,8 +259,8 @@ export function RepositoryView() {
       ) : results.data && results.data.length ? (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">{results.data.length} result(s)</p>
-          {results.data.map((h) => (
-            <HitCard key={`${h.kind}-${h.id}`} hit={h} />
+          {results.data.map((h, i) => (
+            <HitCard key={`${h.kind}-${h.id}`} hit={h} index={i} />
           ))}
         </div>
       ) : (

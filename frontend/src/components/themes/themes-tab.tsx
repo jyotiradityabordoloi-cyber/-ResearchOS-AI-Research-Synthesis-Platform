@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { api, type Project } from "@/lib/api";
+import { useChartAnimation } from "@/lib/motion";
 import { percent } from "@/lib/format";
 import { EmptyState, ErrorState } from "@/components/common";
 import { MergeThemesDialog } from "@/components/review/theme-dialogs";
@@ -33,6 +34,7 @@ function FrequencyTooltip({ active, payload }: { active?: boolean; payload?: { p
 }
 
 export function ThemesTab({ project }: { project: Project }) {
+  const chartMotion = useChartAnimation();
   const [showRejected, setShowRejected] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [merging, setMerging] = useState(false);
@@ -91,7 +93,7 @@ export function ThemesTab({ project }: { project: Project }) {
                   />
                   <YAxis type="category" dataKey="code" width={36} tickLine={false} axisLine={false} fontSize={12} />
                   <Tooltip cursor={{ fill: "var(--muted)" }} content={<FrequencyTooltip />} />
-                  <Bar dataKey="participants" fill="var(--chart-1)" radius={[0, 4, 4, 0]} maxBarSize={22} />
+                  <Bar dataKey="participants" fill="var(--chart-1)" radius={[0, 4, 4, 0]} maxBarSize={22} {...chartMotion} />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -118,8 +120,9 @@ export function ThemesTab({ project }: { project: Project }) {
           </div>
 
           <div className="space-y-4">
-            {data.map((t) => (
+            {data.map((t, i) => (
               <ThemeCard
+                index={i}
                 key={t.id}
                 theme={t}
                 allThemes={data}
@@ -134,7 +137,7 @@ export function ThemesTab({ project }: { project: Project }) {
       )}
 
       {selected.length ? (
-        <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-background/95 backdrop-blur lg:left-64">
+        <div className="dock fixed inset-x-0 bottom-0 z-20 border-t bg-background/95 backdrop-blur lg:left-64">
           <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-10">
             <p className="text-sm">
               {selected.length} theme(s) selected: {selectedThemes.map((t) => t.code).join(", ")}

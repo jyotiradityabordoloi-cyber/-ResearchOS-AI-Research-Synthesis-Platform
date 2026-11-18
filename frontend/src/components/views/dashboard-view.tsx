@@ -6,6 +6,7 @@ import { Activity, ClipboardCheck, FolderKanban, Layers, MessagesSquare } from "
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { api } from "@/lib/api";
+import { useChartAnimation } from "@/lib/motion";
 import { timeAgo } from "@/lib/format";
 import { EmptyState, ErrorState, PageHeader, StatCard } from "@/components/common";
 import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
@@ -13,6 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function DashboardView() {
+  const chartMotion = useChartAnimation();
   const { data, error, isPending, refetch } = useQuery({ queryKey: ["dashboard"], queryFn: api.dashboard });
 
   const chartData =
@@ -83,8 +85,8 @@ export function DashboardView() {
                       }}
                     />
                     <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                    <Bar dataKey="Valid" stackId="a" fill="var(--chart-1)" radius={[0, 0, 0, 0]} maxBarSize={44} />
-                    <Bar dataKey="Needs fixes" stackId="a" fill="var(--chart-4)" radius={[4, 4, 0, 0]} maxBarSize={44} />
+                    <Bar dataKey="Valid" stackId="a" fill="var(--chart-1)" radius={[0, 0, 0, 0]} maxBarSize={44} {...chartMotion} />
+                    <Bar dataKey="Needs fixes" stackId="a" fill="var(--chart-4)" radius={[4, 4, 0, 0]} maxBarSize={44} {...chartMotion} />
                   </BarChart>
                 </ResponsiveContainer>
               )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, ChevronDown, ChevronRight, FileText, Loader2, Save, TriangleAlert, X } from "lucide-react";
+import { AlertCircle, ChevronRight, FileText, Loader2, Save, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api, type InterviewFields, type PreviewItem, type ValidationIssue } from "@/lib/api";
@@ -99,7 +99,7 @@ export function ReviewCard({
           aria-label={open ? "Collapse" : "Expand to review and edit"}
           aria-expanded={open}
         >
-          {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+          <ChevronRight className={cn("size-4 transition-transform duration-200 ease-out-strong", open && "rotate-90")} />
         </Button>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -143,7 +143,7 @@ export function ReviewCard({
       </div>
 
       {open ? (
-        <div className="space-y-4 border-t px-4 py-4">
+        <div className="reveal space-y-4 border-t px-4 py-4">
           {errors.length || warnings.length ? (
             <ul className="space-y-1 text-sm">
               {errors.map((e) => (

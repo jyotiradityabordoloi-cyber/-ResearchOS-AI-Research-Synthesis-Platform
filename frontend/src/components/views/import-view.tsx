@@ -363,7 +363,7 @@ export function ImportView() {
           )}
 
           {items.length ? (
-            <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-background/95 backdrop-blur lg:left-64">
+            <div className="dock fixed inset-x-0 bottom-0 z-20 border-t bg-background/95 backdrop-blur lg:left-64">
               <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-10">
                 <p className="text-sm text-muted-foreground">
                   {counts.invalid

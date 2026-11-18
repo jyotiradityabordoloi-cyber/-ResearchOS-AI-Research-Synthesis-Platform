@@ -16,11 +16,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 const MIN_INTERVIEWS = 5;
 
-function ProjectCard({ p }: { p: Project }) {
+function ProjectCard({ p, index }: { p: Project; index: number }) {
   const pct = Math.min(100, (p.participant_count / MIN_INTERVIEWS) * 100);
   return (
-    <Link href={`/projects/${p.id}`} className="group rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-      <Card className="h-full gap-4 px-5 py-5 shadow-xs transition-shadow group-hover:shadow-md">
+    <Link
+      href={`/projects/${p.id}`}
+      className="enter group rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      style={{ "--i": index } as React.CSSProperties}
+    >
+      <Card className="h-full gap-4 px-5 py-5 shadow-xs transition-[box-shadow,transform] duration-150 ease-out group-hover:shadow-md group-active:scale-[0.99]">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
             <h3 className="truncate font-semibold tracking-tight">{p.name}</h3>
@@ -99,8 +103,8 @@ export function ProjectsView() {
         </div>
       ) : data && data.length > 0 ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {data.map((p) => (
-            <ProjectCard key={p.id} p={p} />
+          {data.map((p, i) => (
+            <ProjectCard key={p.id} p={p} index={i} />
           ))}
         </div>
       ) : data ? (

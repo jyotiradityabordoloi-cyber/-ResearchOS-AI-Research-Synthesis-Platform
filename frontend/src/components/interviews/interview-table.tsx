@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Pencil, Trash2 } from "lucide-react";
+import { ChevronRight, Pencil, Trash2 } from "lucide-react";
 import { Fragment, useState } from "react";
 import { toast } from "sonner";
 
 import { api, type Interview } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { ValidationBadge } from "@/components/common";
 import { InterviewFormDialog } from "@/components/interviews/interview-form-dialog";
 import { Button } from "@/components/ui/button";
@@ -57,7 +58,7 @@ export function InterviewTable({ interviews, showProject = false }: { interviews
                       aria-label={open ? "Collapse interview" : "Expand interview"}
                       aria-expanded={open}
                     >
-                      {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                      <ChevronRight className={cn("size-4 transition-transform duration-200 ease-out-strong", open && "rotate-90")} />
                     </Button>
                   </TableCell>
                   <TableCell className="font-medium">
@@ -114,7 +115,7 @@ export function InterviewTable({ interviews, showProject = false }: { interviews
                   <TableRow className="bg-muted/20 hover:bg-muted/20">
                     <TableCell />
                     <TableCell colSpan={showProject ? 6 : 5} className="whitespace-normal">
-                      <div className="grid gap-4 py-2 lg:grid-cols-2">
+                      <div className="reveal grid gap-4 py-2 lg:grid-cols-2">
                         <div className="space-y-3 text-sm">
                           {iv.validation_errors.length > 0 ? (
                             <ul className="space-y-1">

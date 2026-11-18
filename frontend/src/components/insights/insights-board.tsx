@@ -19,6 +19,7 @@ import { toast } from "sonner";
 
 import { api, type Insight, type PriorityBand, type Theme } from "@/lib/api";
 import { percent } from "@/lib/format";
+import { useChartAnimation } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { EmptyState, ErrorState } from "@/components/common";
 import { DecisionButtons, StatusBadge, useReviewRefresh } from "@/components/review/review-controls";
@@ -102,6 +103,7 @@ function PointTooltip({ active, payload }: { active?: boolean; payload?: { paylo
 }
 
 function FrequencyImpactChart({ insights }: { insights: Insight[] }) {
+  const chartMotion = useChartAnimation();
   const groups = (["high", "medium", "low"] as PriorityBand[]).map((band) => ({
     band,
     points: insights
@@ -142,7 +144,7 @@ function FrequencyImpactChart({ insights }: { insights: Insight[] }) {
             <ReferenceLine y={3} stroke="var(--border)" strokeDasharray="4 4" />
             <Tooltip content={<PointTooltip />} />
             {groups.map((g) => (
-              <Scatter key={g.band} data={g.points} fill={BAND_COLOR[g.band]} fillOpacity={0.85} />
+              <Scatter key={g.band} data={g.points} fill={BAND_COLOR[g.band]} fillOpacity={0.85} {...chartMotion} />
             ))}
           </ScatterChart>
         </ResponsiveContainer>

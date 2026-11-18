@@ -5,6 +5,10 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  /* Motion tokens. The built-in curves are too weak; these give UI motion intent. */
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);      /* enter / exit, press feedback */
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);  /* things moving on screen */
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);          /* drawers and bottom bars */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
@@ -129,5 +133,94 @@
   }
   html {
     @apply font-sans;
+  }
+}
+/* ---------------------------------------------------------------------------
+   Motion
+   Every animation here has a job: confirm a press, show where something came
+   from, or soften content replacing a skeleton. Nothing animates on keyboard
+   actions or on things seen hundreds of times a day.
+   ------------------------------------------------------------------------- */
+
+/* Content entering after it loads (cards, results). Stagger with style="--i: n";
+   capped so long lists never wait. Plays once, when the element first renders. */
+.enter {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 260ms var(--ease-out-strong),
+    transform 260ms var(--ease-out-strong);
+  transition-delay: calc(min(var(--i, 0), 8) * 40ms);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* Panels opened by the user (evidence, original notes). Quick: the user is waiting. */
+.reveal {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 180ms var(--ease-out-strong),
+    transform 180ms var(--ease-out-strong);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* Data bars grow from their start edge so the eye reads them as quantities. */
+.bar-fill {
+  transform-origin: left center;
+  transform: scaleX(1);
+  transition: transform 450ms var(--ease-out-strong);
+
+  @starting-style {
+    transform: scaleX(0);
+  }
+}
+
+/* Action bars pinned to the bottom slide up from the edge they live on. */
+.dock {
+  transform: translateY(0);
+  transition: transform 300ms var(--ease-drawer);
+
+  @starting-style {
+    transform: translateY(100%);
+  }
+}
+
+/* A faster spinner makes the same wait feel shorter. */
+.animate-spin {
+  animation-duration: 750ms;
+}
+
+/* Reduced motion: keep fades (they aid comprehension), drop movement. */
+@media (prefers-reduced-motion: reduce) {
+  .enter,
+  .reveal,
+  .dock {
+    transform: none;
+    transition-property: opacity;
+    transition-delay: 0ms;
+
+    @starting-style {
+      transform: none;
+    }
+  }
+  .bar-fill {
+    transition: none;
+  }
+  /* tw-animate overlays (dialogs, menus, tooltips): fade only, no zoom or slide. */
+  [data-slot] {
+    --tw-enter-scale: 1;
+    --tw-exit-scale: 1;
+    --tw-enter-translate-x: 0;
+    --tw-enter-translate-y: 0;
+    --tw-exit-translate-x: 0;
+    --tw-exit-translate-y: 0;
   }
 }

@@ -169,7 +169,7 @@ export function ReportDocument({ c }: { c: ReportContent }) {
                 {f.participant_count} of {f.total_participants} · {percent(f.frequency)}
               </span>
               <div className="col-span-2 h-1.5 overflow-hidden rounded-full bg-muted">
-                <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(2, f.frequency * 100)}%` }} />
+                <div className="bar-fill h-full rounded-full bg-primary" style={{ width: `${Math.max(2, f.frequency * 100)}%` }} />
               </div>
             </div>
           ))}
