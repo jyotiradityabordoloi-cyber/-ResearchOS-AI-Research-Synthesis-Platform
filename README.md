@@ -58,13 +58,21 @@ Set in `.env` and restart the backend. Settings in the app shows what is active.
 | `AI_PROVIDER` | Cost | Setup |
 |---|---|---|
 | `demo` (default) | free, offline | Nothing. Rule-based and deterministic, labelled "demo" everywhere. Good for trying the workflow. |
+| `gemini` | free tier | Google AI Studio key in `GEMINI_API_KEY` ([get one](https://aistudio.google.com/apikey)). Model `GEMINI_MODEL` (default `gemini-flash-latest`). Requests are paced at `GEMINI_RPM` (default 10/min) and rate limits are retried after Google's suggested delay. |
 | `ollama` | free, local | Install Ollama, `ollama pull qwen2.5:3b` (or a larger model for better themes). |
 | `groq` | free tier | Set `GROQ_API_KEY`. |
 
 | `EMBEDDING_PROVIDER` | Notes |
 |---|---|
 | `hash` (default) | Offline; matches words plus a small topic vocabulary. |
+| `gemini` | `gemini-embedding-001` shortened to 384 dimensions. Real semantic similarity; same key as above. |
 | `ollama` | `ollama pull all-minilm` (384-d). Real semantic similarity for clustering and search. |
+
+> **Privacy:** on Google's free tier, prompts and responses may be used to improve Google's products.
+> Don't send confidential or personal interview data through a free-tier key; use Ollama for that.
+>
+> Changing the embedding provider changes how vectors are made. Re-run synthesis on a project so its
+> themes are re-embedded; otherwise semantic search compares vectors from different models.
 
 **Tested with a real local model.** The full pipeline was run on the 12 sample interviews with
 Ollama `qwen2.5:3b` (hash embeddings) on a laptop CPU: 67 model calls, all returning valid JSON on
@@ -78,8 +86,22 @@ provider:
 | Called complaints "contradictions" | Counter-evidence must express a positive experience | 4 → 2 contradictions |
 
 Expect better theme names and grouping from larger models (e.g. `qwen2.5:7b`) and from
-`EMBEDDING_PROVIDER=ollama` with `all-minilm`. A CPU-only machine is slow; Groq's free tier is much
-faster if your data may leave your machine.
+`EMBEDDING_PROVIDER=ollama` with `all-minilm`. A CPU-only machine is slow; Gemini or Groq's free
+tier is much faster if your data may leave your machine.
+
+**Tested with Google AI Studio (Gemini, free tier).** Same 12 interviews, `gemini-3.5-flash` +
+`gemini-embedding-001`: about 6 minutes at 10 requests/minute; every quote came back verbatim and
+verified; slow dashboards, viewer pricing, sharing and integration blockers came out as themes, the
+SOC 2 blocker and Metabase churn risk as separate outliers, and P09's contradiction was found.
+What we learned:
+
+- Gemini's similarity scores are compressed (most pairs 0.7–0.8), so embeddings alone either lump
+  everything together or fragment. The pipeline therefore forms small precise clusters (0.80) and
+  asks the model which clusters describe the same problem; Python validates and counts.
+- `*-latest` aliases can be overloaded on the free tier (HTTP 503). Pin `GEMINI_MODEL` and keep
+  `GEMINI_FALLBACK_MODEL` set; the app switches automatically when the main model is busy.
+- Results vary slightly between runs (as with any LLM). Use Merge / Split in human review to finish
+  the grouping.
 
 From Docker, the backend reaches Ollama on the host at `host.docker.internal:11434` (already configured).
 

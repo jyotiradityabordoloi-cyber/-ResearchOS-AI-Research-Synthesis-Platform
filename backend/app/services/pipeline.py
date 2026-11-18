@@ -26,6 +26,10 @@ from app.ai.embeddings import Embedder
 from app.ai.engine import AIEngine, InterviewText, split_sentences
 
 DUPLICATE_SIMILARITY = 0.9
+# Split a cluster when the AI rates it as mixing problems (coherence below this).
+SPLIT_COHERENCE = 0.6
+SPLIT_STEP = 0.03
+MIN_SPLIT_SIZE = 2
 LOW_CONFIDENCE = 0.55
 CONTRADICTION_CANDIDATES = 3
 MAX_PAIN_POINTS = 400
@@ -214,6 +218,20 @@ def best_excerpt(pain: str, interview: InterviewRecord) -> str:
     return clean_quote(best) if best_score >= EXCERPT_MIN_OVERLAP else ""
 
 
+def valid_partition(groups: list[list[int]], n: int) -> list[list[int]]:
+    """Turn an AI grouping into a partition of 0..n-1: unknown numbers are dropped, repeats keep
+    their first group, and anything left out stays on its own. Never loses a cluster."""
+    seen: set[int] = set()
+    out: list[list[int]] = []
+    for group in groups:
+        clean = [j for j in dict.fromkeys(group) if isinstance(j, int) and 0 <= j < n and j not in seen]
+        seen.update(clean)
+        if clean:
+            out.append(clean)
+    out += [[j] for j in range(n) if j not in seen]
+    return out
+
+
 def looks_like_complaint(text: str) -> bool:
     """True for a pain statement with no positive signal (not valid counter-evidence)."""
     has_positive = bool(lexicon.match_terms(text, lexicon.POSITIVE_CUES))
@@ -346,10 +364,16 @@ def run_pipeline(
     # 4. Clustering + naming -----------------------------------------------------
     progress("clustering")
     clusters = agglomerate(matrix, embedder.cluster_threshold)
+    # The AI may merge small clusters that describe the same problem. It only sees numbered
+    # clusters of pain-point text; Python validates the grouping and does all the counting.
+    initial_clusters = len(clusters)
+    if len(clusters) > 1:
+        grouping = engine.group_clusters([[points[i].text for i in c] for c in clusters])
+        clusters = [sum((clusters[j] for j in group), []) for group in valid_partition(grouping.groups, len(clusters))]
+    merged_by_ai = initial_clusters - len(clusters)
     themes: list[ThemeDraft] = []
-    for members in clusters:
+    def add_theme(members: list[int], naming) -> None:
         pps = [points[i] for i in members]
-        naming = engine.name_theme([p.text for p in pps])
         participants: dict[str, str] = {}
         for p in pps:
             participants.setdefault(p.interview.key, p.interview.participant_id)
@@ -367,6 +391,23 @@ def run_pipeline(
                 embedding=_centroid(matrix[members]),
             )
         )
+
+    clusters_split = 0
+    for members in clusters:
+        naming = engine.name_theme([points[i].text for i in members])
+        # The AI judges whether a cluster is one problem. If it says the cluster mixes problems,
+        # re-cluster its members more tightly and name the parts separately (one level only).
+        if len(members) >= MIN_SPLIT_SIZE and naming.coherence < SPLIT_COHERENCE:
+            # Stricter than the cluster's own average similarity: pain points about different
+            # problems fall below it, pain points about the same problem stay above.
+            split_at = max(embedder.cluster_threshold + SPLIT_STEP, cohesion(matrix[members]) + 1e-6)
+            parts = [[members[i] for i in part] for part in agglomerate(matrix[members], split_at)]
+            if len(parts) > 1:
+                clusters_split += 1
+                for part in parts:
+                    add_theme(part, engine.name_theme([points[i].text for i in part]))
+                continue
+        add_theme(members, naming)
     _dedupe_names(themes)
 
     # 5. Evidence (supporting) — verified quotes only, linked to the interview ------
@@ -508,6 +549,8 @@ def run_pipeline(
         "sensitive_themes": sum(1 for t in themes if t.requires_approval),
         "unverified_quotes": unverified,
         "quotes_from_notes": excerpts_used,
+        "clusters_split": clusters_split,
+        "clusters_merged_by_ai": merged_by_ai,
     }
     return PipelineResult(pain_points=points, themes=themes, warnings=warnings, stats=stats)
 

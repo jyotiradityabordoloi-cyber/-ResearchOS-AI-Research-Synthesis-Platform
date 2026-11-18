@@ -32,7 +32,30 @@ class LLMError(RuntimeError):
 
 
 class TransientLLMError(LLMError):
-    """Retryable failure (network, timeout, 429, 5xx)."""
+    """Retryable failure (network, timeout, 429, 5xx).
+
+    `retry_after` (seconds), when the provider says how long to wait (e.g. a rate limit).
+    """
+
+    def __init__(self, message: str, retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class RequestThrottle:
+    """Spaces requests to stay under a requests-per-minute limit (free API tiers)."""
+
+    def __init__(self, rpm: float):
+        self.interval = 60.0 / rpm if rpm and rpm > 0 else 0.0
+        self._next = 0.0
+
+    def wait(self) -> None:
+        if not self.interval:
+            return
+        now = time.monotonic()
+        if now < self._next:
+            time.sleep(self._next - now)
+        self._next = max(now, self._next) + self.interval
 
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
@@ -79,7 +102,8 @@ class LLMProvider(ABC):
             except TransientLLMError as exc:
                 last_error = exc
                 log.warning("%s transient error (attempt %d/%d): %s", self.name, attempt, self.max_retries, exc)
-                time.sleep(self.backoff_seconds * attempt)
+                if attempt < self.max_retries:
+                    time.sleep(max(self.backoff_seconds * attempt, min(exc.retry_after or 0.0, 120.0)))
                 continue
             try:
                 return schema.model_validate(parse_json_object(raw))
@@ -100,9 +124,23 @@ class LLMProvider(ABC):
         ) from last_error
 
 
+def _retry_after(resp: httpx.Response) -> float | None:
+    """Seconds to wait from a Retry-After header or a Google RetryInfo `retryDelay` ("23s")."""
+    header = resp.headers.get("retry-after")
+    if header:
+        try:
+            return float(header)
+        except ValueError:
+            pass
+    m = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', resp.text)
+    return float(m.group(1)) if m else None
+
+
 def _raise_for_status(resp: httpx.Response, provider: str) -> None:
     if resp.status_code == 429 or resp.status_code >= 500:
-        raise TransientLLMError(f"{provider} HTTP {resp.status_code}: {resp.text[:300]}")
+        raise TransientLLMError(
+            f"{provider} HTTP {resp.status_code}: {resp.text[:300]}", retry_after=_retry_after(resp)
+        )
     if resp.status_code >= 400:
         # 4xx other than 429 won't fix itself (bad key, unknown model).
         raise LLMError(f"{provider} HTTP {resp.status_code}: {resp.text[:300]}")
@@ -169,10 +207,97 @@ class GroqProvider(LLMProvider):
         return resp.json()["choices"][0]["message"]["content"]
 
 
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+
+
+class GeminiProvider(LLMProvider):
+    """Google AI Studio (Gemini API), free tier. JSON mode via `responseMimeType`.
+
+    Free-tier keys have low per-minute limits, so requests are spaced by `rpm` and a 429
+    waits for the `retryDelay` Google returns.
+    """
+
+    name = "gemini"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        timeout: float,
+        rpm: float = 10,
+        client: httpx.Client | None = None,
+        base_url: str = GEMINI_BASE_URL,
+        fallback_model: str = "",
+        **kw,
+    ):
+        kw.setdefault("max_retries", 4)
+        super().__init__(**kw)
+        if not api_key:
+            raise LLMError("GEMINI_API_KEY is not set. Create a free key at https://aistudio.google.com/apikey")
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.fallback_model = fallback_model if fallback_model and fallback_model != model else ""
+        self.url = f"{self.base_url}/models/{model}:generateContent"
+        self.client = client or httpx.Client(timeout=timeout)
+        self.headers = {"x-goog-api-key": api_key}
+        self.throttle = RequestThrottle(rpm)
+
+    def _chat(self, messages: list[dict[str, str]], json_schema: dict) -> str:
+        system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+        contents = [
+            {"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]}
+            for m in messages
+            if m["role"] != "system"
+        ]
+        body = {
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": contents,
+            "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
+        }
+        self.throttle.wait()
+        try:
+            resp = self.client.post(self.url, headers=self.headers, json=body)
+        except httpx.HTTPError as exc:
+            raise TransientLLMError(f"Gemini request failed: {exc.__class__.__name__}: {exc}") from exc
+        if resp.status_code == 503 and self.fallback_model:
+            # The model is overloaded ("high demand"): switch to the fallback for the rest of the run.
+            log.warning("Gemini model %s overloaded; switching to %s", self.model, self.fallback_model)
+            self.model, self.fallback_model = self.fallback_model, ""
+            self.url = f"{self.base_url}/models/{self.model}:generateContent"
+            raise TransientLLMError("Gemini model overloaded; retrying with the fallback model.", retry_after=1.0)
+        if resp.status_code == 404:
+            raise LLMError(
+                f"Gemini model '{self.model}' was not found. Set GEMINI_MODEL to a model your key can use "
+                "(e.g. gemini-flash-latest)."
+            )
+        _raise_for_status(resp, "Gemini")
+        data = resp.json()
+        candidates = data.get("candidates") or []
+        if not candidates:
+            reason = (data.get("promptFeedback") or {}).get("blockReason", "no candidates returned")
+            raise LLMError(f"Gemini returned no answer ({reason}).")
+        parts = (candidates[0].get("content") or {}).get("parts") or []
+        text = "".join(p.get("text", "") for p in parts)
+        if not text:
+            finish = candidates[0].get("finishReason", "unknown")
+            # An empty answer is retried like malformed JSON.
+            return f"<<empty response: finishReason={finish}>>"
+        return text
+
+
 def build_llm(settings: Settings) -> LLMProvider:
     kw = {"max_retries": settings.llm_max_retries}
     if settings.ai_provider == "ollama":
         return OllamaProvider(settings.ollama_base_url, settings.ollama_model, settings.llm_timeout_seconds, **kw)
     if settings.ai_provider == "groq":
         return GroqProvider(settings.groq_api_key, settings.groq_model, settings.llm_timeout_seconds, **kw)
+    if settings.ai_provider == "gemini":
+        return GeminiProvider(
+            settings.gemini_api_key,
+            settings.gemini_model,
+            settings.llm_timeout_seconds,
+            rpm=settings.gemini_rpm,
+            fallback_model=settings.gemini_fallback_model,
+            max_retries=max(settings.llm_max_retries, 4),
+        )
     raise LLMError(f"No LLM provider for AI_PROVIDER={settings.ai_provider!r}")

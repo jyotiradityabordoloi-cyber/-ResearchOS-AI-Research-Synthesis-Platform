@@ -27,8 +27,8 @@
                                              ┌───────────────▼──────────────────────┐
                                              │ PostgreSQL 16 + pgvector (port 5434) │
                                              └──────────────────────────────────────┘
-   LLM:        demo (default, offline) │ ollama (local) │ groq (free tier)
-   Embeddings: hash (default, 384-d)   │ ollama all-minilm (384-d)
+   LLM:        demo (default, offline) │ gemini (free tier) │ ollama (local) │ groq (free tier)
+   Embeddings: hash (default, 384-d)   │ gemini-embedding-001 (384-d) │ ollama all-minilm (384-d)
 ```
 
 ### Backend layout
@@ -44,9 +44,9 @@
 | `app/services/review.py` | Human review: edit, approve, merge, split, move, override |
 | `app/services/report.py`, `pdf.py` | Report assembly (stage 9), Markdown and PDF |
 | `app/services/repository.py` | Keyword / theme / semantic search with filters |
-| `app/ai/providers.py` | `LLMProvider.generate_json(schema)` with retries; Ollama, Groq |
+| `app/ai/providers.py` | `LLMProvider.generate_json(schema)` with retries; Gemini (rate-paced), Ollama, Groq |
 | `app/ai/engine.py` | `AIEngine` interface; `LLMEngine` (prompts) and `DemoEngine` (rules) |
-| `app/ai/embeddings.py` | `HashEmbedder` (offline) and `OllamaEmbedder` |
+| `app/ai/embeddings.py` | `HashEmbedder` (offline), `GeminiEmbedder` and `OllamaEmbedder` |
 | `app/ai/schemas.py` | Pydantic schemas every LLM response is validated against |
 | `app/ai/lexicon.py` | Sensitive-topic rules (used with every provider) and demo vocabularies |
 
@@ -91,7 +91,7 @@ Paste / upload ─▶ parse ─▶ validation report ─▶ PM fixes ─▶ save
 | 1 | Extraction | LLM → `ExtractionResult` | Positive statements are not pain points |
 | 2 | Embeddings | Embedder | 384-d, normalised |
 | 3 | Similarity | numpy | Near-duplicates from the same participant collapse (≥ 0.9) |
-| 4 | Clustering | Python + LLM | Average-linkage agglomerative; LLM names each cluster |
+| 4 | Clustering | Python + LLM | Average-linkage agglomerative into small, precise clusters → the LLM groups clusters that describe the same problem (it sees numbered clusters of text only; Python validates the partition) → the LLM names each theme; a theme it rates as incoherent is re-split more tightly |
 | 5 | Evidence validation | Python | Quote must appear verbatim in the interview |
 | 6 | Frequency | Python | Unique participants ÷ total participants |
 | 7 | Insights | LLM → `InsightDraft` | Severity and strategic relevance judged separately from frequency |

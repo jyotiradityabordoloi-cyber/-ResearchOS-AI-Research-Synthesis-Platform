@@ -100,7 +100,12 @@ export function SettingsView() {
         </CardHeader>
         <CardContent>
           <pre className="overflow-x-auto rounded-lg border bg-muted/40 p-4 font-mono text-xs leading-relaxed">
-{`# Local, free, private (recommended)
+{`# Google AI Studio, free tier (key: aistudio.google.com/apikey)
+AI_PROVIDER=gemini
+EMBEDDING_PROVIDER=gemini
+GEMINI_API_KEY=...
+
+# Local, free, private
 AI_PROVIDER=ollama
 OLLAMA_MODEL=qwen2.5:3b
 EMBEDDING_PROVIDER=ollama

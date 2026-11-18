@@ -36,6 +36,12 @@ class ThemeNaming(BaseModel):
     coherence: float = Field(ge=0, le=1, description="How clearly the pain points share one underlying problem.")
 
 
+class ClusterGrouping(BaseModel):
+    groups: list[list[int]] = Field(
+        description="Each inner list holds the numbers of clusters that describe the SAME underlying problem."
+    )
+
+
 class ContradictionCheck(BaseModel):
     contradicts: bool
     explanation: str = Field(default="", max_length=600)

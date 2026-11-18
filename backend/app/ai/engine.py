@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from app.ai import lexicon
 from app.ai.providers import LLMProvider, build_llm
 from app.ai.schemas import (
+    ClusterGrouping,
     ContradictionCheck,
     ExtractedPainPoint,
     ExtractionResult,
@@ -57,6 +58,10 @@ class AIEngine(ABC):
 
     @abstractmethod
     def name_theme(self, pain_points: list[str]) -> ThemeNaming: ...
+
+    def group_clusters(self, clusters: list[list[str]]) -> ClusterGrouping:
+        """Which small clusters describe the same problem. Default: keep them all separate."""
+        return ClusterGrouping(groups=[[i] for i in range(len(clusters))])
 
     @abstractmethod
     def check_contradiction(self, theme_name: str, theme_description: str, candidate: str) -> ContradictionCheck: ...
@@ -110,6 +115,22 @@ class LLMEngine(AIEngine):
             "problem statement (not a solution). Describe it in 1-2 sentences using only the given "
             "pain points. Rate coherence 0-1: low if they describe different problems.",
             user=f"Pain points from different participants:\n{listing}",
+        )
+
+    def group_clusters(self, clusters: list[list[str]]) -> ClusterGrouping:
+        listing = "\n".join(
+            f"Cluster {i}:\n" + "\n".join(f"  - {p}" for p in items[:6]) for i, items in enumerate(clusters)
+        )
+        return self.provider.generate_json(
+            ClusterGrouping,
+            system=_RULES
+            + " You are grouping small clusters of user pain points into research themes. Put clusters in the "
+            "same group ONLY if they describe the same underlying user problem (one problem a product team "
+            "would fix with one initiative). Keep distinct problems apart, even if they share words such as "
+            "'dashboard' or 'data'. Pricing, cancellation/churn, switching to competitors, security/compliance "
+            "and performance are always separate problems from each other. Use every cluster number exactly once; "
+            "a group may contain a single cluster.",
+            user=listing,
         )
 
     def check_contradiction(self, theme_name: str, theme_description: str, candidate: str) -> ContradictionCheck:
