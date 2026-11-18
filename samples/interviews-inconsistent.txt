@@ -1,0 +1,30 @@
+Interview notes — messy export from the shared doc (sample dataset, Test 2)
+
+Participant ID: P11
+Role: Product designer
+Company size: 50-200
+Pain: hard to find old research
+Behaviour: Searches Slack for links to old decks.
+Quote: "Every quarter we redo research we already did."
+
+---
+Role: Engineering manager
+Plan: Business
+Pain: Onboarding new engineers to the analytics stack takes weeks because nothing is documented.
+Behavior: Pairs every new hire with a senior engineer for their first month.
+
+---
+**Participant ID:** P13
+**Participant Role:** Support lead
+**Pain:** n/a
+**Behavior:** TBD
+
+---
+Date: 14 March
+Interviewer: Sam
+Participant ID: P14
+Pain: Customers can't find the export button on mobile, so they email support asking for CSVs.
+Verbatim Quote: "Half my tickets are people asking where export went."
+
+---
+Spoke with someone from the finance team, they mentioned budgeting is painful but we didn't capture details.

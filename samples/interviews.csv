@@ -1,0 +1,4 @@
+Participant ID,Participant Role,Company Size,Plan Tier,Pain,Behavior,Verbatim Quote,Interviewer
+P21,Growth Marketer,10-50,Starter,"Attribution reports disagree with what our ad platforms show, so nobody trusts them.","Keeps a manual spreadsheet that reconciles ad spend with signups each week.","I spend Fridays arguing about whose numbers are right.",Alex
+P22,Data Analyst,200-500,Business,"Dashboard filters reset whenever I share a link, so colleagues see the wrong segment.","Sends written instructions explaining which filters to set after opening the link.","Every shared link comes with a paragraph of instructions.",Alex
+P23,Product Lead,50-200,Team,"Can't annotate charts with release dates, so spikes need explaining in every meeting.","Adds release notes as comments in a separate Notion page next to the dashboard.","The chart shows what happened but never why.",Priya

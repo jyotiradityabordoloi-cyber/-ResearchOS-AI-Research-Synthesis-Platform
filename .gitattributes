@@ -1,0 +1,5 @@
+# Store text with LF endings so Docker (Linux) builds and shells behave the same on every OS.
+* text=auto eol=lf
+*.ico binary
+*.png binary
+*.pdf binary
