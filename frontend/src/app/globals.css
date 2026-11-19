@@ -224,3 +224,17 @@
     --tw-exit-translate-y: 0;
   }
 }
+
+/* Copilot side panel: slides in from the right edge it lives on. */
+.copilot-panel {
+  transition: transform 300ms var(--ease-drawer);
+}
+@media (prefers-reduced-motion: reduce) {
+  .copilot-panel {
+    transition: opacity 150ms ease;
+  }
+  .copilot-panel.translate-x-full {
+    transform: none;
+    opacity: 0;
+  }
+}

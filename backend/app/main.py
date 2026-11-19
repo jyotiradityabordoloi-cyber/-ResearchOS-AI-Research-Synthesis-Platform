@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
-from app.api.routes import dashboard, imports, interviews, projects, reports, review, synthesis, system
+from app.api.routes import canvas, copilot, dashboard, imports, interviews, projects, reports, review, synthesis, system
 from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.models import ResearchProject, SynthesisRun
@@ -74,7 +74,7 @@ def create_app() -> FastAPI:
         log.exception("Unhandled error on %s %s", request.method, request.url.path)
         return JSONResponse(status_code=500, content={"detail": "Something went wrong on the server. Please try again."})
 
-    for module in (system, dashboard, projects, imports, interviews, synthesis, review, reports):
+    for module in (system, dashboard, projects, imports, interviews, synthesis, review, canvas, copilot, reports):
         app.include_router(module.router)
     return app
 

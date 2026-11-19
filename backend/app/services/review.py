@@ -64,6 +64,21 @@ def _theme_snapshot(t: Theme) -> dict[str, Any]:
     }
 
 
+def evidence_snapshot(e: ThemeEvidence) -> dict[str, Any]:
+    """Enough to recreate an evidence row exactly (used by undo)."""
+    return {
+        "theme_id": str(e.theme_id),
+        "interview_id": str(e.interview_id),
+        "pain_point_id": str(e.pain_point_id) if e.pain_point_id else None,
+        "participant_id": e.participant_id,
+        "quote": e.quote,
+        "quote_verified": e.quote_verified,
+        "source_field": e.source_field,
+        "stance": e.stance,
+        "note": e.note,
+    }
+
+
 def recompute_theme(db: Session, theme: Theme) -> None:
     """Recalculate participant counts, frequency and flags from the theme's evidence."""
     db.flush()
@@ -210,21 +225,46 @@ def merge_themes(
         raise ReviewError(422, "Themes must belong to this project.")
     target, sources = themes[0], themes[1:]
     before = {"target": _theme_snapshot(target), "sources": [_theme_snapshot(s) for s in sources]}
+    # Everything `unmerge_theme` needs to put the themes back exactly as they were.
+    undo: dict[str, Any] = {
+        "target": {
+            "name": target.name,
+            "description": target.description,
+            "status": target.status,
+            "confidence": target.confidence,
+            "human_edited": target.human_edited,
+        },
+        "sources": [],
+        "moved": [],
+        "duplicates": [],
+    }
 
     for src in sources:
+        undo["sources"].append(
+            {
+                "id": str(src.id),
+                "status": src.status,
+                "insights": {
+                    str(i.id): i.status for i in db.scalars(select(Insight).where(Insight.theme_id == src.id))
+                },
+            }
+        )
         for e in list(src.evidence):
             duplicate = any(
                 x.interview_id == e.interview_id and x.quote == e.quote and x.stance == e.stance for x in target.evidence
             )
             if duplicate:
+                undo["duplicates"].append(evidence_snapshot(e))
                 db.delete(e)
             else:
+                undo["moved"].append({"evidence_id": str(e.id), "from": str(src.id)})
                 e.theme_id = target.id
         src.status = ReviewStatus.MERGED
         src.merged_into_id = target.id
         for insight in db.scalars(select(Insight).where(Insight.theme_id == src.id)):
             insight.status = ReviewStatus.MERGED
         recompute_theme(db, src)
+    before["undo"] = undo
     if name:
         target.name = name.strip()
         for insight in db.scalars(select(Insight).where(Insight.theme_id == target.id, Insight.origin == Origin.AI)):
@@ -308,7 +348,9 @@ def move_evidence(
         raise ReviewError(422, "Evidence is already in this theme.")
     if source.project_id != target.project_id:
         raise ReviewError(422, "Themes must belong to the same project.")
-    if ev.stance == EvidenceStance.SUPPORTING and sum(
+    # An AI theme must keep one supporting item (reject or merge it instead); a PM-created
+    # theme may be emptied, e.g. when undoing the drag that created it.
+    if source.origin == Origin.AI and ev.stance == EvidenceStance.SUPPORTING and sum(
         1 for e in source.evidence if e.stance == EvidenceStance.SUPPORTING
     ) == 1:
         raise ReviewError(422, "This is the theme's last supporting item. Merge or reject the theme instead.")
@@ -388,6 +430,42 @@ def review_insight(
     audit.record(
         db, project_id=insight.project_id, entity_type="insight", entity_id=insight.id, action=decision,
         before={"status": before}, after={"status": insight.status}, comment=comment, user=user,
+    )
+    db.commit()
+    return insight
+
+
+def comment_on_insight(db: Session, insight_id: uuid.UUID, text: str, user: User):
+    """A reviewer note in the insight's thread. Stored in the audit log, never edited."""
+    insight = _live_insight(db, insight_id)
+    entry = audit.record(
+        db, project_id=insight.project_id, entity_type="insight", entity_id=insight.id,
+        action="review_comment", comment=text.strip(), user=user,
+    )
+    db.commit()
+    return entry
+
+
+def flag_insight_sensitive(db: Session, insight_id: uuid.UUID, tags: list[str], reason: str, user: User) -> Insight:
+    """Mark a finding as sensitive by hand (e.g. the lexicon missed it).
+
+    Tags only ever get added here: sensitivity detected from the text or evidence can't be
+    switched off. An approved insight goes back to review, because approving a sensitive
+    finding needs an explicit acknowledgement it never had.
+    """
+    insight = _live_insight(db, insight_id)
+    before = {"sensitive_tags": list(insight.sensitive_tags or []), "status": insight.status}
+    merged = sorted(set(insight.sensitive_tags or []) | set(tags))
+    if merged == before["sensitive_tags"]:
+        return insight
+    insight.sensitive_tags = merged
+    insight.requires_approval = True
+    if insight.status == ReviewStatus.APPROVED:
+        insight.status = ReviewStatus.PROPOSED
+    audit.record(
+        db, project_id=insight.project_id, entity_type="insight", entity_id=insight.id, action="flag_sensitive",
+        before=before, after={"sensitive_tags": insight.sensitive_tags, "status": insight.status},
+        comment=reason.strip(), user=user,
     )
     db.commit()
     return insight

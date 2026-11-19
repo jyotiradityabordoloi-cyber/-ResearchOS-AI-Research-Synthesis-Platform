@@ -106,7 +106,7 @@ def list_insights(
     db: Session = Depends(get_db),
 ) -> list[InsightOut]:
     """Prioritised insights: manual override first, otherwise the computed band, then score."""
-    from app.api.routes.review import insight_out, sort_insights
+    from app.api.routes.review import add_context, insight_out, sort_insights
 
     stmt = (
         select(Insight, Theme.code)
@@ -115,4 +115,4 @@ def list_insights(
     )
     if not include_rejected:
         stmt = stmt.where(Insight.status != ReviewStatus.REJECTED)
-    return sort_insights([insight_out(i, code, project.name) for i, code in db.execute(stmt).all()])
+    return sort_insights(add_context(db, [insight_out(i, code, project.name) for i, code in db.execute(stmt).all()]))

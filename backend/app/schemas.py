@@ -1,7 +1,7 @@
 """Pydantic request/response schemas for the HTTP API."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -87,9 +87,14 @@ class ProjectOut(ORM):
     participant_count: int = 0
     theme_count: int = 0
     pending_review_count: int = 0
+    review_total: int = 0  # live themes + insights that can be reviewed
+    review_done: int = 0  # of those, approved or rejected
+    report_count: int = 0
     ready_for_synthesis: bool = False
+    min_participants: int = 5
     created_at: datetime
     updated_at: datetime
+    last_activity_at: datetime | None = None  # latest of updated_at and the audit log
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +166,66 @@ class InterviewOut(ORM):
     validation_errors: list[ValidationIssue]
     created_at: datetime
     updated_at: datetime
+
+
+class FacetValue(BaseModel):
+    value: str
+    count: int
+
+
+class InterviewFacets(BaseModel):
+    roles: list[FacetValue]
+    company_sizes: list[FacetValue]
+    plan_tiers: list[FacetValue]
+
+
+class InterviewPainPoint(BaseModel):
+    """A pain point the active synthesis run extracted from this interview."""
+
+    id: uuid.UUID
+    text: str
+    quote: str | None
+    quote_verified: bool
+    severity: int | None
+    sensitive_tags: list[str]
+    duplicate_count: int
+    theme_id: uuid.UUID | None = None
+    theme_code: str | None = None
+    theme_name: str | None = None
+
+
+class ThemeQuote(BaseModel):
+    quote: str
+    stance: str
+    verified: bool
+    note: str = ""
+
+
+class InterviewThemeLink(BaseModel):
+    theme_id: uuid.UUID
+    code: str
+    name: str
+    status: str
+    frequency: float
+    participant_count: int
+    is_outlier: bool
+    requires_approval: bool
+    quotes: list[ThemeQuote]
+
+
+class InterviewInsightLink(BaseModel):
+    id: uuid.UUID
+    title: str
+    status: str
+    priority: Literal["high", "medium", "low"]
+    theme_code: str
+
+
+class InterviewFindings(BaseModel):
+    synthesised: bool  # False until the project has an active synthesis run
+    pain_points: list[InterviewPainPoint]
+    themes: list[InterviewThemeLink]
+    insights: list[InterviewInsightLink]
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +373,57 @@ class EvidenceOut(ORM):
     note: str
 
 
+class ObservationOut(BaseModel):
+    """A pain point extracted by synthesis, shown on the theme canvas."""
+
+    id: uuid.UUID
+    interview_id: uuid.UUID
+    participant_id: str
+    participant_role: str
+    company_size: str
+    plan_tier: str
+    text: str
+    quote: str | None
+    quote_verified: bool
+    severity: int | None
+    sensitive_tags: list[str]
+    duplicate_count: int
+
+
+class AttachObservationRequest(BaseModel):
+    pain_point_id: uuid.UUID
+    stance: Literal["supporting", "contradicting"] = "supporting"
+
+
+class AttachObservationResult(BaseModel):
+    evidence: EvidenceOut
+    moved_from_theme_id: uuid.UUID | None = None
+
+
+class EvidenceStanceRequest(BaseModel):
+    stance: Literal["supporting", "contradicting"]
+
+
+class ThemeCreate(BaseModel):
+    name: str = Field(min_length=3, max_length=300)
+    description: str = Field(default="", max_length=5000)
+
+
+class DetachEvidenceResult(BaseModel):
+    pain_point_id: uuid.UUID | None
+    interview_id: uuid.UUID
+    quote: str
+    stance: str
+
+
+class DeleteThemeResult(BaseModel):
+    evidence_returned_to: uuid.UUID | None
+
+
+class UnmergeResult(BaseModel):
+    restored_theme_ids: list[uuid.UUID]
+
+
 class ThemeOut(ORM):
     id: uuid.UUID
     project_id: uuid.UUID
@@ -365,8 +481,43 @@ class InsightOut(ORM):
     computed_priority: Literal["high", "medium", "low"] = "low"
     effective_priority: Literal["high", "medium", "low"] = "low"
     is_overridden: bool = False
+    # Review context, counted from the linked theme (frequency stays the theme's, never typed in).
+    theme_name: str | None = None
+    participant_count: int = 0
+    evidence_count: int = 0  # supporting quotes
+    contradicting_count: int = 0
+    comment_count: int = 0
     created_at: datetime
     updated_at: datetime
+
+
+class InsightEvidenceItem(EvidenceOut):
+    participant_role: str = ""
+    company_size: str = ""
+    plan_tier: str = ""
+
+
+class InsightTheme(BaseModel):
+    id: uuid.UUID
+    code: str
+    name: str
+    status: str
+    participant_ids: list[str]
+    total_participants: int
+
+
+class InsightEvidence(BaseModel):
+    theme: InsightTheme | None
+    evidence: list[InsightEvidenceItem]
+
+
+class CommentCreate(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class SensitiveFlag(BaseModel):
+    tags: list[Literal["pricing", "churn", "competitive_switching"]] = Field(min_length=1)
+    reason: str = Field(min_length=3, max_length=2000)
 
 
 # ---------------------------------------------------------------------------
@@ -449,9 +600,28 @@ class InsightCreate(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+ReportSection = Literal[
+    "summary", "objective", "participants", "methodology", "themes", "frequency", "quotes",
+    "contradictions", "outliers", "implications", "next_steps", "limitations",
+]
+
+
+class ReportOptionsIn(BaseModel):
+    sections: list[ReportSection] | None = None
+    excluded_theme_ids: list[uuid.UUID] = Field(default_factory=list, max_length=200)
+    executive_summary: str | None = Field(default=None, max_length=5000)
+
+
 class ReportCreate(BaseModel):
     kind: Literal["draft", "approved"] = "draft"
     title: str | None = Field(default=None, max_length=300)
+    options: ReportOptionsIn | None = None
+
+
+class ReportPreview(BaseModel):
+    title: str
+    content: dict[str, Any]
+    markdown: str
 
 
 class ReportSummary(ORM):
@@ -537,15 +707,128 @@ class ProjectCount(BaseModel):
     themes: int
 
 
+class ActivityDay(BaseModel):
+    day: date
+    valid: int
+    needs_fixes: int
+
+
+class ProjectProgress(BaseModel):
+    """Where one project is in the collect -> synthesise -> review -> report flow."""
+
+    project_id: uuid.UUID
+    project_name: str
+    status: str
+    synthesis_status: str
+    interviews: int
+    valid_interviews: int
+    participants: int
+    min_participants: int
+    themes: int
+    review_total: int  # live themes + insights
+    review_done: int  # approved or rejected
+    reports: int
+    last_activity_at: datetime
+
+
+class ReviewQueueItem(BaseModel):
+    kind: Literal["theme", "insight"]
+    id: uuid.UUID
+    project_id: uuid.UUID
+    project_name: str
+    code: str | None = None
+    title: str
+    severity: int
+    frequency: float
+    requires_approval: bool
+    is_outlier: bool
+    has_contradictions: bool = False
+
+
+class FindingItem(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    project_name: str
+    theme_code: str | None
+    title: str
+    implication: str
+    priority: Literal["high", "medium", "low"]
+    frequency: float
+    severity: int
+    strategic_relevance: int
+    status: str
+
+
+class RunItem(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    project_name: str
+    status: str
+    stage: str
+    provider: str
+    model: str
+    started_at: datetime
+    finished_at: datetime | None
+    themes: int | None = None
+    participants: int | None = None
+    error: str | None = None
+
+
 class DashboardStats(BaseModel):
     total_projects: int
     total_interviews: int
     valid_interviews: int
     themes_identified: int
     pending_reviews: int
+    sensitive_pending: int = 0
+    review_counts: dict[str, int] = {}
     projects_by_status: dict[str, int]
     per_project: list[ProjectCount]
     recent_activity: list[ActivityItem]
+    interview_activity: list[ActivityDay] = []
+    project_progress: list[ProjectProgress] = []
+    review_queue: list[ReviewQueueItem] = []
+    top_findings: list[FindingItem] = []
+    recent_runs: list[RunItem] = []
+
+
+class CopilotTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=4000)
+
+
+class CopilotRequest(BaseModel):
+    question: str = Field(min_length=2, max_length=1000)
+    theme_id: uuid.UUID | None = None
+    insight_id: uuid.UUID | None = None
+    interview_id: uuid.UUID | None = None
+    history: list[CopilotTurn] = Field(default_factory=list, max_length=12)
+
+
+class CopilotCitation(BaseModel):
+    key: str  # T3, E12, I2 or P, as written in the answer
+    kind: Literal["theme", "evidence", "insight", "interview"]
+    label: str
+    theme_id: uuid.UUID | None = None
+    interview_id: uuid.UUID | None = None
+    insight_id: uuid.UUID | None = None
+    participant_id: str | None = None
+    quote: str | None = None
+    stance: str | None = None
+
+
+class CopilotAnswer(BaseModel):
+    answer: str
+    citations: list[CopilotCitation]
+    # ai: written by the configured model. demo: no model configured, rule-based.
+    # fallback: the model failed, rule-based answer shown instead.
+    mode: Literal["ai", "demo", "fallback"]
+    provider: str
+    model: str
+    notice: str | None = None
+    theme_code: str | None = None
+    interview_participant: str | None = None
+    evidence_in_context: int = 0
 
 
 class AuditEntry(ORM):

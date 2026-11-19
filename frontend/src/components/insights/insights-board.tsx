@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Hand, Lightbulb, MessageSquare, Pencil, Plus, ShieldAlert, Star } from "lucide-react";
+import { Lightbulb, Plus } from "lucide-react";
 import { useState } from "react";
 import {
   CartesianGrid,
@@ -20,10 +19,9 @@ import { toast } from "sonner";
 import { api, type Insight, type PriorityBand, type Theme } from "@/lib/api";
 import { percent } from "@/lib/format";
 import { useChartAnimation } from "@/lib/motion";
-import { cn } from "@/lib/utils";
 import { EmptyState, ErrorState } from "@/components/common";
-import { DecisionButtons, StatusBadge, useReviewRefresh } from "@/components/review/review-controls";
-import { Badge } from "@/components/ui/badge";
+import { InsightReview } from "@/components/insights/insight-review";
+import { useReviewRefresh } from "@/components/review/review-controls";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -38,53 +36,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { Tooltip as UiTooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-const BAND_STYLE: Record<PriorityBand, string> = {
-  high: "bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300",
-  medium: "bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
-  low: "bg-muted text-muted-foreground",
-};
 const BAND_COLOR: Record<PriorityBand, string> = {
   high: "var(--chart-4)",
   medium: "var(--chart-3)",
   low: "var(--chart-5)",
 };
 
-function PriorityBadge({ insight }: { insight: Insight }) {
-  const badge = (
-    <Badge variant="secondary" className={cn("capitalize", BAND_STYLE[insight.effective_priority])}>
-      {insight.is_overridden ? <Hand /> : null}
-      {insight.effective_priority}
-    </Badge>
-  );
-  if (!insight.is_overridden) return badge;
-  return (
-    <UiTooltip>
-      <TooltipTrigger asChild>
-        <span className="inline-flex flex-col items-start gap-0.5">
-          {badge}
-          <span className="text-[11px] text-muted-foreground">manual · was {insight.computed_priority}</span>
-        </span>
-      </TooltipTrigger>
-      <TooltipContent className="max-w-64">Override reason: {insight.override_reason}</TooltipContent>
-    </UiTooltip>
-  );
-}
-
-function Score({ value }: { value: number }) {
-  return (
-    <span className="inline-flex gap-0.5" aria-label={`${value} of 5`}>
-      {[1, 2, 3, 4, 5].map((i) => (
-        <span key={i} className={`h-2 w-1.5 rounded-sm ${i <= value ? "bg-primary" : "bg-muted"}`} />
-      ))}
-    </span>
-  );
-}
-
-type Point = { x: number; y: number; z: number; title: string; code: string | null; band: PriorityBand };
+type Point = { id: string; x: number; y: number; z: number; title: string; code: string | null; band: PriorityBand };
 
 function PointTooltip({ active, payload }: { active?: boolean; payload?: { payload: Point }[] }) {
   const p = active ? payload?.[0]?.payload : undefined;
@@ -102,13 +62,14 @@ function PointTooltip({ active, payload }: { active?: boolean; payload?: { paylo
   );
 }
 
-function FrequencyImpactChart({ insights }: { insights: Insight[] }) {
+function FrequencyImpactChart({ insights, onPick }: { insights: Insight[]; onPick: (id: string) => void }) {
   const chartMotion = useChartAnimation();
   const groups = (["high", "medium", "low"] as PriorityBand[]).map((band) => ({
     band,
     points: insights
       .filter((i) => i.effective_priority === band && i.status !== "rejected")
       .map<Point>((i) => ({
+        id: i.id,
         x: i.frequency,
         y: (i.severity + i.strategic_relevance) / 2,
         z: Math.max(0.1, i.confidence),
@@ -123,7 +84,7 @@ function FrequencyImpactChart({ insights }: { insights: Insight[] }) {
         <CardTitle>Frequency vs impact</CardTitle>
         <CardDescription>
           How many people mention it (across) is separate from how much it matters (up: average of severity and strategic
-          relevance). Dot size is evidence confidence.
+          relevance). Dot size is evidence confidence. Click a dot to open that insight.
         </CardDescription>
       </CardHeader>
       <CardContent className="h-72">
@@ -144,7 +105,18 @@ function FrequencyImpactChart({ insights }: { insights: Insight[] }) {
             <ReferenceLine y={3} stroke="var(--border)" strokeDasharray="4 4" />
             <Tooltip content={<PointTooltip />} />
             {groups.map((g) => (
-              <Scatter key={g.band} data={g.points} fill={BAND_COLOR[g.band]} fillOpacity={0.85} {...chartMotion} />
+              <Scatter
+                key={g.band}
+                data={g.points}
+                fill={BAND_COLOR[g.band]}
+                fillOpacity={0.85}
+                className="cursor-pointer"
+                onClick={(d: unknown) => {
+                  const id = (d as { payload?: Point }).payload?.id;
+                  if (id) onPick(id);
+                }}
+                {...chartMotion}
+              />
             ))}
           </ScatterChart>
         </ResponsiveContainer>
@@ -389,101 +361,34 @@ function AddInsightDialog({ projectId, themes }: { projectId: string; themes: Th
   );
 }
 
-function InsightRow({ insight, showProject }: { insight: Insight; showProject: boolean }) {
-  const [editing, setEditing] = useState(false);
-  const refresh = useReviewRefresh(insight.project_id);
+/**
+ * Insight review with the shared scores dialog. Used by the project Insights tab and the
+ * cross-project Insights page.
+ */
+export function InsightReviewPanel({
+  insights,
+  showProject = false,
+  focus,
+}: {
+  insights: Insight[];
+  showProject?: boolean;
+  focus?: { id: string } | null;
+}) {
+  const [editing, setEditing] = useState<Insight | null>(null);
   return (
-    <TableRow className={cn("align-top", insight.status === "rejected" && "opacity-60")}>
-      <TableCell>
-        <PriorityBadge insight={insight} />
-      </TableCell>
-      <TableCell className="max-w-xl min-w-64 whitespace-normal">
-        <p className="font-medium">
-          {insight.theme_code ? <span className="mr-1.5 font-mono text-xs text-muted-foreground">{insight.theme_code}</span> : null}
-          {insight.title}
-        </p>
-        {showProject ? (
-          <Link href={`/projects/${insight.project_id}`} className="text-xs text-muted-foreground hover:underline">
-            {insight.project_name}
-          </Link>
-        ) : null}
-        {insight.implication ? <p className="text-sm text-muted-foreground">{insight.implication}</p> : null}
-        {insight.pm_comment ? (
-          <p className="mt-1 flex gap-1.5 text-xs text-sky-700 dark:text-sky-400">
-            <MessageSquare className="mt-0.5 size-3 shrink-0" /> {insight.pm_comment}
-          </p>
-        ) : null}
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {insight.requires_approval ? (
-            <Badge variant="secondary" className="bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300">
-              <ShieldAlert /> Sensitive
-            </Badge>
-          ) : null}
-          {insight.strategic_flag ? (
-            <Badge variant="secondary" className="bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300">
-              <Star /> Strategic
-            </Badge>
-          ) : null}
-          {insight.is_outlier ? <Badge variant="outline">Single participant</Badge> : null}
-          {insight.origin === "manual" ? <Badge variant="outline">PM-written</Badge> : null}
-          <StatusBadge status={insight.status} />
-        </div>
-      </TableCell>
-      <TableCell className="text-right tabular-nums">{percent(insight.frequency)}</TableCell>
-      <TableCell>
-        <Score value={insight.severity} />
-      </TableCell>
-      <TableCell className="hidden md:table-cell">
-        <Score value={insight.strategic_relevance} />
-      </TableCell>
-      <TableCell className="hidden text-right tabular-nums md:table-cell">{percent(insight.confidence)}</TableCell>
-      <TableCell>
-        <div className="flex flex-col items-end gap-1">
-          <Button size="xs" variant="ghost" onClick={() => setEditing(true)}>
-            <Pencil className="size-3" /> Edit
-          </Button>
-          <DecisionButtons
-            size="xs"
-            status={insight.status}
-            sensitiveTags={insight.sensitive_tags}
-            requiresApproval={insight.requires_approval}
-            onDecide={async (payload) => {
-              const r = await api.review.reviewInsight(insight.id, payload);
-              refresh();
-              return r;
-            }}
-          />
-        </div>
-        <EditInsightDialog insight={insight} open={editing} onOpenChange={setEditing} />
-      </TableCell>
-    </TableRow>
-  );
-}
-
-export function InsightsTable({ insights, showProject = false }: { insights: Insight[]; showProject?: boolean }) {
-  return (
-    <div className="overflow-x-auto rounded-xl border bg-background">
-      <Table>
-        <TableHeader>
-          <TableRow className="bg-muted/40 hover:bg-muted/40">
-            <TableHead className="w-28">Priority</TableHead>
-            <TableHead>Insight</TableHead>
-            <TableHead className="text-right">Frequency</TableHead>
-            <TableHead>Severity</TableHead>
-            <TableHead className="hidden md:table-cell">Strategic</TableHead>
-            <TableHead className="hidden text-right md:table-cell">Confidence</TableHead>
-            <TableHead className="w-40 text-right">
-              <span className="sr-only">Actions</span>
-            </TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {insights.map((i) => (
-            <InsightRow key={i.id} insight={i} showProject={showProject} />
-          ))}
-        </TableBody>
-      </Table>
-    </div>
+    <>
+      <InsightReview insights={insights} showProject={showProject} onEditScores={setEditing} focus={focus} />
+      {editing ? (
+        <EditInsightDialog
+          key={editing.id}
+          insight={editing}
+          open
+          onOpenChange={(o) => {
+            if (!o) setEditing(null);
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -491,6 +396,7 @@ export function InsightsTable({ insights, showProject = false }: { insights: Ins
 export function InsightsBoard({ projectId }: { projectId: string }) {
   const insights = useQuery({ queryKey: ["insights", projectId], queryFn: () => api.synthesis.insights(projectId) });
   const themes = useQuery({ queryKey: ["themes", projectId, { showRejected: false }], queryFn: () => api.synthesis.themes(projectId) });
+  const [focus, setFocus] = useState<{ id: string } | null>(null);
   if (insights.error) return <ErrorState error={insights.error} onRetry={() => insights.refetch()} />;
   if (insights.isPending) return <Skeleton className="h-64 w-full" />;
   const data = insights.data;
@@ -505,8 +411,8 @@ export function InsightsBoard({ projectId }: { projectId: string }) {
       </div>
       {data.length ? (
         <>
-          <FrequencyImpactChart insights={data} />
-          <InsightsTable insights={data} />
+          <FrequencyImpactChart insights={data} onPick={(id) => setFocus({ id })} />
+          <InsightReviewPanel insights={data} focus={focus} />
         </>
       ) : (
         <EmptyState

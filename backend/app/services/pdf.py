@@ -13,6 +13,8 @@ from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from fpdf.fonts import FontFace
 
+from app.services.report import numbered_headings
+
 _TRANSLATE = str.maketrans(
     {
         "“": '"', "”": '"', "‘": "'", "’": "'", "–": "-", "—": " - ", "…": "...", "•": "-",
@@ -130,106 +132,113 @@ def render_pdf(content: dict[str, Any], title: str) -> bytes:
         size=9,
     )
 
-    titles = content["section_titles"]
-    pdf.h2(f"1. {titles[0]}")
-    for o in s["objective"]["objectives"] or ["No objectives recorded."]:
-        pdf.bullet(o)
-    if s["objective"]["context"]:
-        pdf.para(s["objective"]["context"], muted=True)
+    def summary() -> None:
+        pdf.para(content["summary"]["text"])
 
-    pdf.h2(f"2. {titles[1]}")
-    pdf.bullet(
-        f"{p['unique_participants']} unique participants ({p['valid_interviews']} valid of {p['total_interviews']} interviews)"
-    )
-    pdf.bullet("Roles: " + ", ".join(f"{k} ({v})" for k, v in p["roles"].items()))
-    pdf.bullet("Company size: " + ", ".join(f"{k} ({v})" for k, v in p["company_sizes"].items()))
-    pdf.bullet("Plan tier: " + ", ".join(f"{k} ({v})" for k, v in p["plan_tiers"].items()))
-    if p["target_segments"]:
-        pdf.bullet("Target segments: " + ", ".join(p["target_segments"]))
+    def objective() -> None:
+        for o in s["objective"]["objectives"] or ["No objectives recorded."]:
+            pdf.bullet(o)
+        if s["objective"]["context"]:
+            pdf.para(s["objective"]["context"], muted=True)
 
-    pdf.h2(f"3. {titles[2]}")
-    for m in s["methodology"]:
-        pdf.bullet(m)
-
-    pdf.h2(f"4. {titles[3]}")
-    if not s["themes"]:
-        pdf.para("No recurring themes in this report.", muted=True)
-    for t in s["themes"]:
-        flags = [x for x, on in (("unreviewed", not t["reviewed"]), ("strategic", t["strategic_flag"]),
-                                 ("sensitive, approved", bool(t["sensitive_tags"]))) if on]
-        pdf.h3(f"{t['code']} - {t['name']}" + (f"  ({', '.join(flags)})" if flags else ""))
-        pdf.para(t["description"])
-        pdf.para(
-            f"{t['participant_count']} of {t['total_participants']} participants ({_pct(t['frequency'])}): "
-            f"{', '.join(t['participant_ids'])}  |  severity {t['severity']}/5  |  confidence {_pct(t['confidence'])}",
-            muted=True,
-            size=9,
+    def participants() -> None:
+        pdf.bullet(
+            f"{p['unique_participants']} unique participants ({p['valid_interviews']} valid of {p['total_interviews']} interviews)"
         )
-        if t["implication"]:
-            pdf.para(f"Implication: {t['implication']}", size=9)
+        pdf.bullet("Roles: " + ", ".join(f"{k} ({v})" for k, v in p["roles"].items()))
+        pdf.bullet("Company size: " + ", ".join(f"{k} ({v})" for k, v in p["company_sizes"].items()))
+        pdf.bullet("Plan tier: " + ", ".join(f"{k} ({v})" for k, v in p["plan_tiers"].items()))
+        if p["target_segments"]:
+            pdf.bullet("Target segments: " + ", ".join(p["target_segments"]))
 
-    pdf.h2(f"5. {titles[4]}")
-    pdf.table(
-        ["Theme", "Participants", "Frequency"],
-        [
-            [f"{f['code']} - {f['name']}" + (" (outlier)" if f["is_outlier"] else ""),
-             f"{f['participant_count']} of {f['total_participants']}", _pct(f["frequency"])]
-            for f in s["frequency"]
-        ],
-        (110, 40, 24),
-    )
+    def methodology() -> None:
+        for m in s["methodology"]:
+            pdf.bullet(m)
 
-    pdf.h2(f"6. {titles[5]}")
-    for q in s["quotes"]:
-        pdf.h3(f"{q['code']} - {q['name']}")
-        if not q["quotes"]:
-            pdf.para("No verified quote available.", muted=True)
-        for item in q["quotes"]:
-            pdf.quote(item["quote"], item["participant_id"])
+    def themes() -> None:
+        if not s["themes"]:
+            pdf.para("No recurring themes in this report.", muted=True)
+        for t in s["themes"]:
+            flags = [x for x, on in (("unreviewed", not t["reviewed"]), ("strategic", t["strategic_flag"]),
+                                     ("sensitive, approved", bool(t["sensitive_tags"]))) if on]
+            pdf.h3(f"{t['code']} - {t['name']}" + (f"  ({', '.join(flags)})" if flags else ""))
+            pdf.para(t["description"])
+            pdf.para(
+                f"{t['participant_count']} of {t['total_participants']} participants ({_pct(t['frequency'])}): "
+                f"{', '.join(t['participant_ids'])}  |  severity {t['severity']}/5  |  confidence {_pct(t['confidence'])}",
+                muted=True,
+                size=9,
+            )
+            if t["implication"]:
+                pdf.para(f"Implication: {t['implication']}", size=9)
 
-    pdf.h2(f"7. {titles[6]}")
-    if not s["contradictions"]:
-        pdf.para("No contradicting evidence was found.", muted=True)
-    for x in s["contradictions"]:
-        pdf.h3(f"{x['code']} - {x['name']}")
-        if x["quote"]:
-            pdf.quote(x["quote"], x["participant_id"])
-        if x["note"]:
-            pdf.para(x["note"], muted=True, size=9)
-
-    pdf.h2(f"8. {titles[7]}")
-    if not s["outliers"]:
-        pdf.para("No single-participant findings.", muted=True)
-    for t in s["outliers"]:
-        impact = "High-impact" if t["severity"] >= 4 else "Single participant"
-        pdf.bullet(f"{t['name']} ({impact}, severity {t['severity']}/5, {', '.join(t['participant_ids'])}): {t['description']}")
-
-    pdf.h2(f"9. {titles[8]}")
-    if s["implications"]:
+    def frequency() -> None:
         pdf.table(
-            ["Priority", "Insight", "Implication", "Freq.", "Sev.", "Strat."],
+            ["Theme", "Participants", "Frequency"],
             [
-                [
-                    x["priority"].title() + (" (manual)" if x["overridden"] else ""),
-                    (f"{x['theme_code']} - " if x["theme_code"] else "") + x["title"],
-                    x["implication"],
-                    _pct(x["frequency"]),
-                    f"{x['severity']}/5",
-                    f"{x['strategic_relevance']}/5",
-                ]
-                for x in s["implications"]
+                [f"{f['code']} - {f['name']}" + (" (outlier)" if f["is_outlier"] else ""),
+                 f"{f['participant_count']} of {f['total_participants']}", _pct(f["frequency"])]
+                for f in s["frequency"]
             ],
-            (22, 48, 60, 14, 14, 16),
+            (110, 40, 24),
         )
-    else:
-        pdf.para("No implications included.", muted=True)
 
-    pdf.h2(f"10. {titles[9]}")
-    for i, x in enumerate(s["next_steps"], 1):
-        pdf.bullet(x, marker=f"{i}.")
+    def quotes() -> None:
+        for q in s["quotes"]:
+            pdf.h3(f"{q['code']} - {q['name']}")
+            if not q["quotes"]:
+                pdf.para("No verified quote available.", muted=True)
+            for item in q["quotes"]:
+                pdf.quote(item["quote"], item["participant_id"])
 
-    pdf.h2(f"11. {titles[10]}")
-    for x in s["limitations"]:
-        pdf.bullet(x)
+    def contradictions() -> None:
+        if not s["contradictions"]:
+            pdf.para("No contradicting evidence was found.", muted=True)
+        for x in s["contradictions"]:
+            pdf.h3(f"{x['code']} - {x['name']}")
+            if x["quote"]:
+                pdf.quote(x["quote"], x["participant_id"])
+            if x["note"]:
+                pdf.para(x["note"], muted=True, size=9)
+
+    def outliers() -> None:
+        if not s["outliers"]:
+            pdf.para("No single-participant findings.", muted=True)
+        for t in s["outliers"]:
+            impact = "High-impact" if t["severity"] >= 4 else "Single participant"
+            pdf.bullet(f"{t['name']} ({impact}, severity {t['severity']}/5, {', '.join(t['participant_ids'])}): {t['description']}")
+
+    def implications() -> None:
+        if s["implications"]:
+            pdf.table(
+                ["Priority", "Insight", "Implication", "Freq.", "Sev.", "Strat."],
+                [
+                    [
+                        x["priority"].title() + (" (manual)" if x["overridden"] else ""),
+                        (f"{x['theme_code']} - " if x["theme_code"] else "") + x["title"],
+                        x["implication"],
+                        _pct(x["frequency"]),
+                        f"{x['severity']}/5",
+                        f"{x['strategic_relevance']}/5",
+                    ]
+                    for x in s["implications"]
+                ],
+                (22, 48, 60, 14, 14, 16),
+            )
+        else:
+            pdf.para("No implications included.", muted=True)
+
+    def next_steps() -> None:
+        for i, x in enumerate(s["next_steps"], 1):
+            pdf.bullet(x, marker=f"{i}.")
+
+    def limitations() -> None:
+        for x in s["limitations"]:
+            pdf.bullet(x)
+
+    render = locals()
+    for key, heading in numbered_headings(content):
+        pdf.h2(heading)
+        render[key]()
 
     return bytes(pdf.output())

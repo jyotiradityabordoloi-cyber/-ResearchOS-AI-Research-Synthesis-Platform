@@ -37,6 +37,9 @@ export function useReviewRefresh(projectId: string) {
       ["projects"],
       ["audit", projectId],
       ["dashboard"],
+      ["insight-history"],
+      ["insight-evidence"],
+      ["interview-findings"],
     ])
       qc.invalidateQueries({ queryKey: key });
   };

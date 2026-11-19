@@ -17,14 +17,19 @@ runs on local [Ollama](https://ollama.com) or Groq's free tier.
 
 | Area | What you can do |
 |---|---|
-| **Projects** | Objectives, target segments, interview count, synthesis status, change history |
+| **Dashboard** | Command centre: count-up KPIs, 30-day interview activity, project progress (collect → report), review queue with sensitive items first, top findings, AI synthesis runs; every chart and KPI opens the matching filtered view |
+| **Projects** | Rich cards with interview readiness, collect → report stage bar, review backlog and last activity; search, status chips with counts, synthesis filter and sort; quick actions on hover |
+| **Interview explorer** | Search participants; filter by project, role, company size, plan tier and status (facet counts); detail panel with highlighted pain point, extracted pain points, the themes and insights each interview supports or contradicts, and the original notes with every cited quote highlighted; ↑ ↓ to step through; deep links from any evidence quote |
 | **Import** | Paste notes or upload `.txt` `.md` `.csv` `.json`; tolerant parser keeps the original text |
 | **Validation** | Report before saving: missing Participant ID / Pain / Behavior, filler text, repeated participants, < 5 participants; fix in place |
 | **AI synthesis** | 8-stage pipeline: extract → embed → dedupe → cluster → verify quotes → frequency → insights → contradictions & outliers |
 | **Themes** | Participant frequency, severity, confidence, verified quotes, contradicting evidence, outlier / sensitive / low-confidence flags |
+| **Theme canvas** | Three panels: extracted observations, theme clusters, selected theme details. Drag observations or quotes between themes, onto *New theme*, or back to unassign; merge, split, create, rename, delete PM-created themes; mark evidence supporting or contradicting; expand/collapse clusters; hover to preview quotes. Every change is saved and undoable (Ctrl/⌘+Z, Shift for redo) |
 | **Human review** | Rename, edit, merge, split, move evidence, approve / reject; sensitive findings need acknowledgement + reason |
+| **Insight review** | Cards per insight with theme, frequency, severity, strategic relevance, confidence, priority, evidence count and status kept apart; expand for the original quotes (with segment and a link to the interview), an editable implication, reviewer comments and the decision history; approve/reject (moves on to the next pending item), flag sensitive, mark strategic; filter by priority, status and sensitivity; click a dot on the frequency-vs-impact chart to open that insight |
 | **Prioritisation** | Frequency vs impact chart; severity, strategic relevance and confidence kept separate; manual override with reason |
-| **Reports** | 11-section draft or approved report; Markdown and PDF export; unapproved sensitive findings withheld |
+| **Research copilot** | Side panel on every page (button or Ctrl/⌘+J) that knows the current project, theme, insight and interview. Answers come from the configured AI provider, grounded in the project's themes, quotes and insights, with every claim cited (hover a citation for the quote, click to open it). Without an AI provider, or if it fails, answers are rule-based and labelled as such |
+| **Reports** | Report builder with live preview: pick sections (an executive summary plus the 11 standard sections), include or leave out themes (left-out themes are disclosed under Limitations), approve sensitive findings in place (unapproved ones are always withheld), edit the executive summary, then save and export Markdown or PDF. Draft or approved; the preview is produced by the same code as the saved report and its exports |
 | **Repository** | Search all projects by keyword, theme name or meaning; filter by project, role, company size, plan tier |
 
 ## Quick start (Docker)

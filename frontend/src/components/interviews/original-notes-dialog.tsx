@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { FileText } from "lucide-react";
+import { ArrowUpRight, FileText } from "lucide-react";
 import { useState } from "react";
 
 import { api } from "@/lib/api";
@@ -71,10 +71,17 @@ export function OriginalNotesButton({ interviewId, highlight }: { interviewId: s
                   raw
                 )}
               </pre>
-              <p className="text-xs text-muted-foreground">
-                Validation: {iv.data.validation_status === "valid" ? "valid" : "needs fixes"} · source: {iv.data.source}
-                {iv.data.source_filename ? ` (${iv.data.source_filename})` : ""}
-              </p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  Validation: {iv.data.validation_status === "valid" ? "valid" : "needs fixes"} · source: {iv.data.source}
+                  {iv.data.source_filename ? ` (${iv.data.source_filename})` : ""}
+                </p>
+                <Button asChild variant="outline" size="sm">
+                  <Link href={`/interviews?interview=${interviewId}`} onClick={() => setOpen(false)}>
+                    Open in interview explorer <ArrowUpRight />
+                  </Link>
+                </Button>
+              </div>
             </div>
           ) : (
             <p className="text-sm text-destructive">This interview could not be loaded.</p>

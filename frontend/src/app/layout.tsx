@@ -4,6 +4,7 @@ import "./globals.css";
 
 import { AppSidebar, MobileTopBar } from "@/components/app-sidebar";
 import { ClientOnly } from "@/components/client-only";
+import { Copilot } from "@/components/copilot/copilot";
 import { Providers } from "@/components/providers";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -46,6 +47,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               </main>
             </div>
           </div>
+          <ClientOnly>
+            <Copilot />
+          </ClientOnly>
         </Providers>
       </body>
     </html>

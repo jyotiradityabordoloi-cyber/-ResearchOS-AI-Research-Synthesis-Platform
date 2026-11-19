@@ -8,11 +8,20 @@ Inclusion rules:
 - A "draft" report includes approved and not-yet-reviewed findings (marked as unreviewed).
 - An "approved" report includes approved findings only, needs at least one approved theme,
   and marks the project as completed so it lives on in the repository.
+
+Report builder options (all optional):
+- `sections`: which sections to include, in the standard order. The executive summary is
+  a section of its own.
+- `excluded_theme_ids`: themes the team leaves out. They are named in Limitations, so a
+  report can never quietly drop a finding.
+- `executive_summary`: the team's own summary. Without it, one is assembled from the data.
 """
 
 from __future__ import annotations
 
+import uuid
 from collections import Counter
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -26,6 +35,20 @@ from app.services.review import priority_band
 
 ReportKind = Literal["draft", "approved"]
 
+SECTION_KEYS = [
+    "objective",
+    "participants",
+    "methodology",
+    "themes",
+    "frequency",
+    "quotes",
+    "contradictions",
+    "outliers",
+    "implications",
+    "next_steps",
+    "limitations",
+]
+ALL_SECTIONS = ["summary", *SECTION_KEYS]
 SECTION_TITLES = [
     "Research objective",
     "Participant overview",
@@ -41,6 +64,34 @@ SECTION_TITLES = [
 ]
 _PRIORITY_RANK = {"high": 0, "medium": 1, "low": 2}
 _TAG_LABEL = {"pricing": "pricing", "churn": "churn", "competitive_switching": "competitive switching"}
+
+
+@dataclass
+class ReportOptions:
+    sections: list[str] | None = None  # None: every section
+    excluded_theme_ids: list[uuid.UUID] = field(default_factory=list)
+    executive_summary: str | None = None  # None: generated from the data
+
+
+def section_order(content: dict[str, Any]) -> list[str]:
+    """Sections to render, in order. Reports saved before the builder have all eleven."""
+    return content.get("included_sections") or SECTION_KEYS
+
+
+def section_title(content: dict[str, Any], key: str) -> str:
+    return content.get("section_labels", {}).get(key) or dict(zip(SECTION_KEYS, SECTION_TITLES))[key]
+
+
+def numbered_headings(content: dict[str, Any]) -> list[tuple[str, str]]:
+    """(key, heading) pairs. The executive summary leads unnumbered; the rest count 1, 2, 3..."""
+    out, n = [], 0
+    for key in section_order(content):
+        if key == "summary":
+            out.append((key, section_title(content, key)))
+        else:
+            n += 1
+            out.append((key, f"{n}. {section_title(content, key)}"))
+    return out
 
 
 class ReportError(Exception):
@@ -61,7 +112,10 @@ def _included(status: str, requires_approval: bool, kind: ReportKind) -> bool:
     return status == ReviewStatus.APPROVED or kind == "draft"
 
 
-def build_report_content(db: Session, project: ResearchProject, kind: ReportKind) -> dict[str, Any]:
+def build_report_content(
+    db: Session, project: ResearchProject, kind: ReportKind, options: ReportOptions | None = None
+) -> dict[str, Any]:
+    options = options or ReportOptions()
     if project.active_run_id is None:
         raise ReportError(422, "Run synthesis before generating a report.")
     run = db.get(SynthesisRun, project.active_run_id)
@@ -91,6 +145,11 @@ def build_report_content(db: Session, project: ResearchProject, kind: ReportKind
     kept = [t for t in themes if _included(t.status, t.requires_approval, kind)]
     if kind == "approved" and not kept:
         raise ReportError(422, "Approve at least one theme before generating an approved report.")
+    left_out = set(options.excluded_theme_ids)
+    excluded_by_choice = [t for t in kept if t.id in left_out]
+    kept = [t for t in kept if t.id not in left_out]
+    if kind == "approved" and not kept:
+        raise ReportError(422, "Every approved theme is excluded. Include at least one theme in the report.")
     live = [t for t in themes if t.status not in (ReviewStatus.REJECTED, ReviewStatus.MERGED)]
     withheld_sensitive = [t for t in live if t.requires_approval and t.status != ReviewStatus.APPROVED]
     unreviewed_excluded = [
@@ -244,6 +303,12 @@ def build_report_content(db: Session, project: ResearchProject, kind: ReportKind
         )
     if unreviewed_excluded:
         limitations.append(f"{len(unreviewed_excluded)} theme(s) not yet reviewed are excluded from this approved report.")
+    if excluded_by_choice:
+        limitations.append(
+            f"The team left {len(excluded_by_choice)} theme(s) out of this report: "
+            + "; ".join(f"{t.code} “{t.name}” ({t.participant_count} of {t.total_participants} participants)" for t in excluded_by_choice)
+            + "."
+        )
     if kind == "draft" and any(not t["reviewed"] for t in theme_refs):
         limitations.append("This is a draft: findings marked “unreviewed” have not been approved by the team yet.")
     if project.target_segments:
@@ -252,9 +317,36 @@ def build_report_content(db: Session, project: ResearchProject, kind: ReportKind
             + ". Check that each segment is represented before generalising."
         )
 
+    auto_summary = summarize(
+        kind=kind,
+        participants=len(participants),
+        recurring=recurring,
+        outliers=outliers,
+        implications=implications,
+        contradictions=sum(len(t["contradictions"]) for t in theme_refs),
+        withheld=len(withheld_sensitive),
+        left_out=len(excluded_by_choice),
+    )
+    summary_text = (options.executive_summary or "").strip()
+    wanted = set(options.sections) if options.sections is not None else set(ALL_SECTIONS)
+    included = [k for k in ALL_SECTIONS if k in wanted]
+    if not included:
+        raise ReportError(422, "Choose at least one section.")
+
     return {
         "kind": kind,
         "generated_at": datetime.now(UTC).isoformat(),
+        "included_sections": included,
+        "section_labels": {"summary": "Executive summary", **dict(zip(SECTION_KEYS, SECTION_TITLES))},
+        "summary": {
+            "text": summary_text or auto_summary,
+            "generated": auto_summary,
+            "edited": bool(summary_text) and summary_text != auto_summary,
+        },
+        "options": {
+            "sections": included,
+            "excluded_theme_ids": [str(t.id) for t in excluded_by_choice],
+        },
         "project": {
             "id": str(project.id),
             "name": project.name,
@@ -293,8 +385,39 @@ def build_report_content(db: Session, project: ResearchProject, kind: ReportKind
             "sensitive_pending": [{"code": t.code, "name": t.name, "tags": t.sensitive_tags} for t in withheld_sensitive],
             "unreviewed": len(unreviewed_excluded),
             "rejected": len(rejected),
+            "by_choice": [{"code": t.code, "name": t.name} for t in excluded_by_choice],
         },
     }
+
+
+def summarize(
+    *, kind: str, participants: int, recurring: list, outliers: list, implications: list,
+    contradictions: int, withheld: int, left_out: int,
+) -> str:
+    """A factual executive summary assembled from the report's own numbers (no AI)."""
+    themes = len(recurring) + len(outliers)
+    lines = [
+        f"This {'approved' if kind == 'approved' else 'draft'} report covers {themes} theme(s) "
+        f"from {participants} participant(s)."
+    ]
+    if recurring:
+        top = ", ".join(
+            f"{t['name']} ({t['participant_count']} of {t['total_participants']}, {_pct(t['frequency'])})" for t in recurring[:3]
+        )
+        lines.append(f"The most widespread problems are {top}.")
+    high = [x for x in implications if x["priority"] == "high"]
+    if high:
+        lines.append("Highest priority: " + "; ".join(x["title"] for x in high[:3]) + ".")
+    impactful = [t for t in outliers if t["severity"] >= 4]
+    if impactful:
+        lines.append(f"{len(impactful)} high-impact finding(s) come from a single participant and need validation.")
+    if contradictions:
+        lines.append(f"{contradictions} quote(s) contradict the themes they relate to.")
+    if withheld:
+        lines.append(f"{withheld} sensitive finding(s) are withheld until approved.")
+    if left_out:
+        lines.append(f"{left_out} theme(s) were left out by the team (listed under Limitations).")
+    return " ".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -318,97 +441,109 @@ def to_markdown(c: dict[str, Any], title: str) -> str:
         f"**Synthesis:** {c['run']['provider']} · {c['run']['model']}" + (" (offline demo mode)" if c["run"]["is_demo"] else ""),
         "",
     ]
-    n = iter(range(1, 12))
 
-    out += [f"## {next(n)}. Research objective", ""]
-    out += [f"- {o}" for o in s["objective"]["objectives"]] or ["_No objectives recorded._"]
-    if s["objective"]["context"]:
-        out += ["", s["objective"]["context"]]
+    def summary() -> list[str]:
+        return [c["summary"]["text"]]
 
-    out += ["", f"## {next(n)}. Participant overview", ""]
-    out += [
-        f"- **{p['unique_participants']}** unique participants ({p['valid_interviews']} valid of "
-        f"{p['total_interviews']} interviews)",
-        "- **Roles:** " + ", ".join(f"{k} ({v})" for k, v in p["roles"].items()),
-        "- **Company size:** " + ", ".join(f"{k} ({v})" for k, v in p["company_sizes"].items()),
-        "- **Plan tier:** " + ", ".join(f"{k} ({v})" for k, v in p["plan_tiers"].items()),
-    ]
-    if p["target_segments"]:
-        out.append("- **Target segments:** " + ", ".join(p["target_segments"]))
+    def objective() -> list[str]:
+        lines = [f"- {o}" for o in s["objective"]["objectives"]] or ["_No objectives recorded._"]
+        return lines + (["", s["objective"]["context"]] if s["objective"]["context"] else [])
 
-    out += ["", f"## {next(n)}. Research methodology", ""] + [f"- {m}" for m in s["methodology"]]
-
-    out += ["", f"## {next(n)}. Top recurring themes", ""]
-    if not s["themes"]:
-        out.append("_No recurring themes in this report._")
-    for t in s["themes"]:
-        tags = []
-        if not t["reviewed"]:
-            tags.append("unreviewed")
-        if t["strategic_flag"]:
-            tags.append("strategic")
-        if t["sensitive_tags"]:
-            tags.append("sensitive, approved")
-        if t["is_low_confidence"]:
-            tags.append("low confidence")
-        suffix = f" _({', '.join(tags)})_" if tags else ""
-        out += [
-            f"### {t['code']} · {t['name']}{suffix}",
-            "",
-            t["description"],
-            "",
-            f"- **Participants:** {t['participant_count']} of {t['total_participants']} ({_pct(t['frequency'])}) — "
-            + ", ".join(t["participant_ids"]),
-            f"- **Severity:** {t['severity']}/5 · **Confidence:** {_pct(t['confidence'])}",
+    def participants() -> list[str]:
+        lines = [
+            f"- **{p['unique_participants']}** unique participants ({p['valid_interviews']} valid of "
+            f"{p['total_interviews']} interviews)",
+            "- **Roles:** " + ", ".join(f"{k} ({v})" for k, v in p["roles"].items()),
+            "- **Company size:** " + ", ".join(f"{k} ({v})" for k, v in p["company_sizes"].items()),
+            "- **Plan tier:** " + ", ".join(f"{k} ({v})" for k, v in p["plan_tiers"].items()),
         ]
-        if t["implication"]:
-            out.append(f"- **Implication:** {t['implication']}")
-        out.append("")
+        if p["target_segments"]:
+            lines.append("- **Target segments:** " + ", ".join(p["target_segments"]))
+        return lines
 
-    out += [f"## {next(n)}. Participant frequency", "", "| Theme | Participants | Frequency |", "|---|---|---|"]
-    for f in s["frequency"]:
-        label = f"{f['code']} · {_md_escape(f['name'])}" + (" (outlier)" if f["is_outlier"] else "")
-        out.append(f"| {label} | {f['participant_count']} of {f['total_participants']} | {_pct(f['frequency'])} |")
+    def methodology() -> list[str]:
+        return [f"- {m}" for m in s["methodology"]]
 
-    out += ["", f"## {next(n)}. Supporting quotes", ""]
-    for q in s["quotes"]:
-        out += [f"**{q['code']} · {q['name']}**", ""]
-        if not q["quotes"]:
-            out += ["_No verified quote available._", ""]
-        for item in q["quotes"]:
-            out += [f"> “{_md_escape(item['quote'])}” — {item['participant_id']}", ""]
+    def themes() -> list[str]:
+        if not s["themes"]:
+            return ["_No recurring themes in this report._"]
+        lines: list[str] = []
+        for t in s["themes"]:
+            tags = [x for x, on in (("unreviewed", not t["reviewed"]), ("strategic", t["strategic_flag"]),
+                                    ("sensitive, approved", bool(t["sensitive_tags"])),
+                                    ("low confidence", t["is_low_confidence"])) if on]
+            suffix = f" _({', '.join(tags)})_" if tags else ""
+            lines += [
+                f"### {t['code']} · {t['name']}{suffix}",
+                "",
+                t["description"],
+                "",
+                f"- **Participants:** {t['participant_count']} of {t['total_participants']} ({_pct(t['frequency'])}) — "
+                + ", ".join(t["participant_ids"]),
+                f"- **Severity:** {t['severity']}/5 · **Confidence:** {_pct(t['confidence'])}",
+            ]
+            if t["implication"]:
+                lines.append(f"- **Implication:** {t['implication']}")
+            lines.append("")
+        return lines
 
-    out += [f"## {next(n)}. Contradictory findings", ""]
-    if not s["contradictions"]:
-        out.append("_No contradicting evidence was found._")
-    for x in s["contradictions"]:
-        quote = f" “{_md_escape(x['quote'])}”" if x["quote"] else ""
-        out.append(f"- **{x['code']} · {x['name']}** — {x['participant_id']}:{quote} {_md_escape(x['note'])}".rstrip())
+    def frequency() -> list[str]:
+        lines = ["| Theme | Participants | Frequency |", "|---|---|---|"]
+        for f in s["frequency"]:
+            label = f"{f['code']} · {_md_escape(f['name'])}" + (" (outlier)" if f["is_outlier"] else "")
+            lines.append(f"| {label} | {f['participant_count']} of {f['total_participants']} | {_pct(f['frequency'])} |")
+        return lines
 
-    out += ["", f"## {next(n)}. High-impact outliers", ""]
-    if not s["outliers"]:
-        out.append("_No single-participant findings._")
-    for t in s["outliers"]:
-        impact = "High-impact" if t["severity"] >= 4 else "Single-participant"
-        out.append(
-            f"- **{t['name']}** ({impact}, severity {t['severity']}/5, {', '.join(t['participant_ids'])}): "
-            f"{_md_escape(t['description'])}"
-        )
+    def quotes() -> list[str]:
+        lines: list[str] = []
+        for q in s["quotes"]:
+            lines += [f"**{q['code']} · {q['name']}**", ""]
+            if not q["quotes"]:
+                lines += ["_No verified quote available._", ""]
+            for item in q["quotes"]:
+                lines += [f"> “{_md_escape(item['quote'])}” — {item['participant_id']}", ""]
+        return lines
 
-    out += ["", f"## {next(n)}. Product implications", ""]
-    if not s["implications"]:
-        out.append("_No implications included._")
-    out += ["| Priority | Insight | Implication | Frequency | Severity | Strategic |", "|---|---|---|---|---|---|"]
-    for x in s["implications"]:
-        prio = x["priority"].title() + (f" (manual; computed {x['computed_priority']})" if x["overridden"] else "")
-        name = (f"{x['theme_code']} · " if x["theme_code"] else "") + _md_escape(x["title"])
-        out.append(
-            f"| {prio} | {name} | {_md_escape(x['implication'])} | {_pct(x['frequency'])} | "
-            f"{x['severity']}/5 | {x['strategic_relevance']}/5 |"
-        )
+    def contradictions() -> list[str]:
+        if not s["contradictions"]:
+            return ["_No contradicting evidence was found._"]
+        out_ = []
+        for x in s["contradictions"]:
+            quote = f" “{_md_escape(x['quote'])}”" if x["quote"] else ""
+            out_.append(f"- **{x['code']} · {x['name']}** — {x['participant_id']}:{quote} {_md_escape(x['note'])}".rstrip())
+        return out_
 
-    out += ["", f"## {next(n)}. Recommended next steps", ""] + [f"{i}. {x}" for i, x in enumerate(s["next_steps"], 1)]
-    out += ["", f"## {next(n)}. Limitations", ""] + [f"- {x}" for x in s["limitations"]]
+    def outliers() -> list[str]:
+        if not s["outliers"]:
+            return ["_No single-participant findings._"]
+        return [
+            f"- **{t['name']}** ({'High-impact' if t['severity'] >= 4 else 'Single-participant'}, severity "
+            f"{t['severity']}/5, {', '.join(t['participant_ids'])}): {_md_escape(t['description'])}"
+            for t in s["outliers"]
+        ]
+
+    def implications() -> list[str]:
+        if not s["implications"]:
+            return ["_No implications included._"]
+        lines = ["| Priority | Insight | Implication | Frequency | Severity | Strategic |", "|---|---|---|---|---|---|"]
+        for x in s["implications"]:
+            prio = x["priority"].title() + (f" (manual; computed {x['computed_priority']})" if x["overridden"] else "")
+            name = (f"{x['theme_code']} · " if x["theme_code"] else "") + _md_escape(x["title"])
+            lines.append(
+                f"| {prio} | {name} | {_md_escape(x['implication'])} | {_pct(x['frequency'])} | "
+                f"{x['severity']}/5 | {x['strategic_relevance']}/5 |"
+            )
+        return lines
+
+    def next_steps() -> list[str]:
+        return [f"{i}. {x}" for i, x in enumerate(s["next_steps"], 1)]
+
+    def limitations() -> list[str]:
+        return [f"- {x}" for x in s["limitations"]]
+
+    render = locals()
+    for key, heading in numbered_headings(c):
+        out += [f"## {heading}", ""] + render[key]() + [""]
     return "\n".join(out).strip() + "\n"
 
 
@@ -417,11 +552,16 @@ def to_markdown(c: dict[str, Any], title: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def default_title(project: ResearchProject, kind: ReportKind) -> str:
+    return f"{project.name} — {'research report' if kind == 'approved' else 'draft report'}"
+
+
 def generate_report(
-    db: Session, project: ResearchProject, kind: ReportKind, title: str | None, user: User
+    db: Session, project: ResearchProject, kind: ReportKind, title: str | None, user: User,
+    options: ReportOptions | None = None,
 ) -> ResearchReport:
-    content = build_report_content(db, project, kind)
-    title = (title or "").strip() or f"{project.name} — {'research report' if kind == 'approved' else 'draft report'}"
+    content = build_report_content(db, project, kind, options)
+    title = (title or "").strip() or default_title(project, kind)
     report = ResearchReport(
         project_id=project.id,
         run_id=project.active_run_id,
@@ -439,7 +579,10 @@ def generate_report(
     audit.record(
         db, project_id=project.id, entity_type="report", entity_id=report.id, action="generated",
         after={"kind": kind, "title": report.title, "themes": len(content["sections"]["frequency"]),
-               "withheld_sensitive": report.excluded_sensitive_count},
+               "withheld_sensitive": report.excluded_sensitive_count,
+               "sections": content["included_sections"],
+               "left_out": [t["code"] for t in content["excluded"]["by_choice"]],
+               "summary_edited": content["summary"]["edited"]},
         user=user,
     )
     db.commit()

@@ -77,6 +77,19 @@ function ProviderPillInner() {
   );
 }
 
+function PendingCount() {
+  const { data } = useQuery({ queryKey: ["dashboard"], queryFn: api.dashboard, staleTime: 30_000 });
+  if (!data?.pending_reviews) return null;
+  return (
+    <span
+      className="ml-auto rounded-full bg-amber-100 px-1.5 py-px text-[11px] font-medium text-amber-800 tabular-nums"
+      title={`${data.pending_reviews} findings awaiting review`}
+    >
+      {data.pending_reviews}
+    </span>
+  );
+}
+
 // usePathname() is runtime-only on dynamic routes, so it must stream inside Suspense.
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   return (
@@ -102,14 +115,25 @@ function NavList({ pathname, onNavigate }: { pathname: string | null; onNavigate
             onClick={onNavigate}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+              "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-[color,background-color,transform] duration-150 ease-out active:scale-[0.98]",
               active
                 ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                 : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground",
             )}
           >
-            <Icon className="size-4 shrink-0" />
+            {active ? <span className="absolute top-2 bottom-2 -left-3 w-0.5 rounded-full bg-primary" aria-hidden /> : null}
+            <Icon
+              className={cn(
+                "size-4 shrink-0 transition-colors duration-150",
+                active ? "text-primary" : "group-hover:text-foreground",
+              )}
+            />
             {label}
+            {href === "/insights" ? (
+              <ClientOnly>
+                <PendingCount />
+              </ClientOnly>
+            ) : null}
           </Link>
         );
       })}

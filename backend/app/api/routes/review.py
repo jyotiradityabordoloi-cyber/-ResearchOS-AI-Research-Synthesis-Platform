@@ -3,19 +3,24 @@ from collections.abc import Callable
 from typing import TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user, get_project_or_404
 from app.core.db import get_db
-from app.models import HumanReview, Insight, ResearchProject, Theme, User
-from app.models.enums import ReviewStatus
+from app.models import HumanReview, Insight, Interview, ResearchProject, Theme, ThemeEvidence, User
+from app.models.enums import EvidenceStance, ReviewStatus
 from app.schemas import (
     AddEvidenceRequest,
     AuditEntry,
+    CommentCreate,
     EvidenceOut,
     InsightCreate,
+    InsightEvidence,
+    InsightEvidenceItem,
     InsightOut,
+    InsightTheme,
+    SensitiveFlag,
     InsightUpdate,
     MergeRequest,
     MoveEvidenceRequest,
@@ -58,10 +63,56 @@ def insight_out(insight: Insight, theme_code: str | None = None, project_name: s
     )
 
 
+def add_context(db: Session, items: list[InsightOut]) -> list[InsightOut]:
+    """Theme name, evidence and comment counts for a batch of insights (three queries)."""
+    if not items:
+        return items
+    theme_ids = {i.theme_id for i in items if i.theme_id}
+    themes = {}
+    counts: dict[tuple, int] = {}
+    if theme_ids:
+        themes = {
+            row.id: row
+            for row in db.execute(select(Theme.id, Theme.name, Theme.participant_count).where(Theme.id.in_(theme_ids)))
+        }
+        for tid, stance, n in db.execute(
+            select(ThemeEvidence.theme_id, ThemeEvidence.stance, func.count())
+            .where(ThemeEvidence.theme_id.in_(theme_ids))
+            .group_by(ThemeEvidence.theme_id, ThemeEvidence.stance)
+        ):
+            counts[(tid, stance)] = n
+    comments = dict(
+        db.execute(
+            select(HumanReview.entity_id, func.count())
+            .where(
+                HumanReview.entity_type == "insight",
+                HumanReview.action == "review_comment",
+                HumanReview.entity_id.in_([i.id for i in items]),
+            )
+            .group_by(HumanReview.entity_id)
+        ).all()
+    )
+    out = []
+    for i in items:
+        t = themes.get(i.theme_id)
+        out.append(
+            i.model_copy(
+                update={
+                    "theme_name": t.name if t else None,
+                    "participant_count": t.participant_count if t else 0,
+                    "evidence_count": counts.get((i.theme_id, EvidenceStance.SUPPORTING), 0),
+                    "contradicting_count": counts.get((i.theme_id, EvidenceStance.CONTRADICTING), 0),
+                    "comment_count": comments.get(i.id, 0),
+                }
+            )
+        )
+    return out
+
+
 def _insight_with_code(db: Session, insight_id: uuid.UUID) -> InsightOut:
     insight = db.get(Insight, insight_id, populate_existing=True)
     code = db.scalar(select(Theme.code).where(Theme.id == insight.theme_id)) if insight.theme_id else None
-    return insight_out(insight, code)
+    return add_context(db, [insight_out(insight, code)])[0]
 
 
 def sort_insights(items: list[InsightOut]) -> list[InsightOut]:
@@ -175,7 +226,7 @@ def all_insights(
     if q:
         like = f"%{q.strip()}%"
         stmt = stmt.where(or_(Insight.title.ilike(like), Insight.statement.ilike(like), Insight.implication.ilike(like)))
-    return sort_insights([insight_out(i, code, pname) for i, code, pname in db.execute(stmt).all()])
+    return sort_insights(add_context(db, [insight_out(i, code, pname) for i, code, pname in db.execute(stmt).all()]))
 
 
 @router.post("/api/projects/{project_id}/insights", response_model=InsightOut, status_code=201)
@@ -210,4 +261,66 @@ def review_insight(
     insight_id: uuid.UUID, payload: ReviewDecision, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> InsightOut:
     _call(lambda: review.review_insight(db, insight_id, payload.decision, payload.comment, payload.acknowledge_sensitive, user))
+    return _insight_with_code(db, insight_id)
+
+
+@router.get("/api/insights/{insight_id}/evidence", response_model=InsightEvidence)
+def insight_evidence(insight_id: uuid.UUID, db: Session = Depends(get_db)) -> InsightEvidence:
+    """The original quotes behind an insight (through its theme), with each participant's segment."""
+    insight = db.get(Insight, insight_id)
+    if insight is None:
+        raise HTTPException(status_code=404, detail="Insight not found")
+    if not insight.theme_id:
+        return InsightEvidence(theme=None, evidence=[])
+    theme = db.get(Theme, insight.theme_id)
+    rows = db.execute(
+        select(ThemeEvidence, Interview.participant_role, Interview.company_size, Interview.plan_tier)
+        .join(Interview, Interview.id == ThemeEvidence.interview_id)
+        .where(ThemeEvidence.theme_id == theme.id)
+        .order_by(
+            ThemeEvidence.stance != EvidenceStance.SUPPORTING,
+            ThemeEvidence.quote_verified.desc(),
+            ThemeEvidence.participant_id,
+        )
+    ).all()
+    return InsightEvidence(
+        theme=InsightTheme(
+            id=theme.id, code=theme.code, name=theme.name, status=theme.status,
+            participant_ids=theme.participant_ids, total_participants=theme.total_participants,
+        ),
+        evidence=[
+            InsightEvidenceItem.model_validate(ev).model_copy(
+                update={"participant_role": role, "company_size": size, "plan_tier": plan}
+            )
+            for ev, role, size, plan in rows
+        ],
+    )
+
+
+@router.get("/api/insights/{insight_id}/history", response_model=list[AuditEntry])
+def insight_history(insight_id: uuid.UUID, db: Session = Depends(get_db)) -> list[AuditEntry]:
+    """Every review action and reviewer comment on this insight, newest first."""
+    rows = db.scalars(
+        select(HumanReview)
+        .options(selectinload(HumanReview.user))
+        .where(HumanReview.entity_type == "insight", HumanReview.entity_id == insight_id)
+        .order_by(HumanReview.created_at.desc())
+    )
+    return [AuditEntry.model_validate(r).model_copy(update={"actor": r.user.name if r.user else None}) for r in rows]
+
+
+@router.post("/api/insights/{insight_id}/comments", response_model=AuditEntry, status_code=201)
+def comment_on_insight(
+    insight_id: uuid.UUID, payload: CommentCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> AuditEntry:
+    entry = _call(lambda: review.comment_on_insight(db, insight_id, payload.text, user))
+    return AuditEntry.model_validate(entry).model_copy(update={"actor": user.name})
+
+
+@router.post("/api/insights/{insight_id}/sensitive", response_model=InsightOut)
+def flag_sensitive(
+    insight_id: uuid.UUID, payload: SensitiveFlag, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> InsightOut:
+    """Flag a finding as sensitive by hand; it then needs acknowledged approval."""
+    _call(lambda: review.flag_insight_sensitive(db, insight_id, payload.tags, payload.reason, user))
     return _insight_with_code(db, insight_id)

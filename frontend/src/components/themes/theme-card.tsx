@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMutation } from "@tanstack/react-query";
 import {
   ArrowRightLeft,
@@ -100,7 +101,13 @@ function EvidenceItem({ e, theme, others }: { e: Evidence; theme: Theme; others:
     <li className="group space-y-1">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <User className="size-3" />
-        <span className="font-medium text-foreground">{e.participant_id}</span>
+        <Link
+          href={`/interviews?interview=${e.interview_id}`}
+          className="font-medium text-foreground underline-offset-2 hover:text-primary hover:underline"
+          title="Open the source interview"
+        >
+          {e.participant_id}
+        </Link>
         {e.source_field ? <span>· from {SOURCE_LABEL[e.source_field] ?? e.source_field}</span> : null}
         {e.quote_verified ? (
           <Tooltip>

@@ -27,7 +27,8 @@ export function Providers({ children }: { children: ReactNode }) {
     <QueryClientProvider client={getQueryClient()}>
       <TooltipProvider delayDuration={200}>
         {children}
-        <Toaster position="bottom-right" richColors closeButton />
+        {/* Raised so toasts never cover the copilot launcher in the same corner. */}
+        <Toaster position="bottom-right" richColors closeButton offset={{ bottom: 76, right: 20 }} mobileOffset={{ bottom: 76 }} />
       </TooltipProvider>
     </QueryClientProvider>
   );

@@ -3,11 +3,40 @@
 import { ShieldAlert } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type { ReportContent } from "@/lib/api";
+import type { ReportContent, ReportSectionKey } from "@/lib/api";
 import { formatDate, percent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { OriginalNotesButton } from "@/components/interviews/original-notes-dialog";
 import { Badge } from "@/components/ui/badge";
+
+const DEFAULT_ORDER: ReportSectionKey[] = [
+  "objective",
+  "participants",
+  "methodology",
+  "themes",
+  "frequency",
+  "quotes",
+  "contradictions",
+  "outliers",
+  "implications",
+  "next_steps",
+  "limitations",
+];
+
+export const DEFAULT_TITLES: Record<ReportSectionKey, string> = {
+  summary: "Executive summary",
+  objective: "Research objective",
+  participants: "Participant overview",
+  methodology: "Research methodology",
+  themes: "Top recurring themes",
+  frequency: "Participant frequency",
+  quotes: "Supporting quotes",
+  contradictions: "Contradictory findings",
+  outliers: "High-impact outliers",
+  implications: "Product implications",
+  next_steps: "Recommended next steps",
+  limitations: "Limitations",
+};
 
 const PRIORITY_STYLE: Record<string, string> = {
   high: "bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300",
@@ -15,11 +44,11 @@ const PRIORITY_STYLE: Record<string, string> = {
   low: "bg-muted text-muted-foreground",
 };
 
-function Section({ n, title, children }: { n: number; title: string; children: ReactNode }) {
+function Section({ n, title, children }: { n?: number; title: string; children: ReactNode }) {
   return (
     <section className="space-y-3 border-t pt-6 first:border-0 first:pt-0 print:break-inside-avoid-page">
       <h2 className="text-lg font-semibold tracking-tight">
-        <span className="mr-2 text-muted-foreground tabular-nums">{n}.</span>
+        {n !== undefined ? <span className="mr-2 text-muted-foreground tabular-nums">{n}.</span> : null}
         {title}
       </h2>
       {children}
@@ -60,37 +89,18 @@ function Quote({ text, who, interviewId, tone = "primary" }: { text: string; who
 export function ReportDocument({ c }: { c: ReportContent }) {
   const s = c.sections;
   const p = s.participants;
-  const t = c.section_titles;
-  return (
-    <article className="space-y-6 rounded-xl border bg-background p-6 shadow-xs sm:p-10">
-      <header className="space-y-3">
-        <div className="flex flex-wrap gap-2">
-          {c.kind === "approved" ? (
-            <Badge variant="secondary" className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-              Approved report
-            </Badge>
-          ) : (
-            <Badge variant="outline">Draft: not all findings reviewed</Badge>
-          )}
-          {c.run.is_demo ? (
-            <Badge variant="secondary" className="bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-              Offline demo mode
-            </Badge>
-          ) : null}
-        </div>
-        <p className="text-sm text-muted-foreground">
-          {c.project.name} · generated {formatDate(c.generated_at)} · {c.run.provider} ({c.run.model})
-        </p>
-        {c.excluded.sensitive_pending.length ? (
-          <p className="flex items-start gap-2 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:bg-rose-950 dark:text-rose-300">
-            <ShieldAlert className="mt-0.5 size-4 shrink-0" />
-            {c.excluded.sensitive_pending.length} sensitive finding(s) withheld until approved:{" "}
-            {c.excluded.sensitive_pending.map((x) => `${x.code} ${x.name}`).join("; ")}
-          </p>
-        ) : null}
-      </header>
-
-      <Section n={1} title={t[0]}>
+  const order = c.included_sections ?? DEFAULT_ORDER;
+  // The executive summary leads unnumbered; the other sections count 1, 2, 3...
+  const numbers = new Map<ReportSectionKey, number>(order.filter((k) => k !== "summary").map((k, i) => [k, i + 1]));
+  const blocks: Record<ReportSectionKey, ReactNode> = {
+    summary: c.summary ? (
+      <div className="space-y-1.5">
+        <p className="text-[15px] leading-relaxed whitespace-pre-line text-pretty">{c.summary.text}</p>
+        {!c.summary.edited ? <p className="text-xs text-muted-foreground">Assembled from the report&apos;s own numbers.</p> : null}
+      </div>
+    ) : null,
+    objective: (
+      <>
         {s.objective.objectives.length ? (
           <ul className="list-disc space-y-1 pl-5 text-sm">
             {s.objective.objectives.map((o) => (
@@ -101,9 +111,10 @@ export function ReportDocument({ c }: { c: ReportContent }) {
           <Muted>No objectives recorded.</Muted>
         )}
         {s.objective.context ? <p className="text-sm text-muted-foreground">{s.objective.context}</p> : null}
-      </Section>
-
-      <Section n={2} title={t[1]}>
+      </>
+    ),
+    participants: (
+      <>
         <p className="text-sm">
           <span className="text-2xl font-semibold tabular-nums">{p.unique_participants}</span> unique participants ·{" "}
           {p.valid_interviews} valid of {p.total_interviews} interviews
@@ -116,17 +127,19 @@ export function ReportDocument({ c }: { c: ReportContent }) {
         {p.target_segments.length ? (
           <p className="text-sm text-muted-foreground">Target segments: {p.target_segments.join(", ")}</p>
         ) : null}
-      </Section>
-
-      <Section n={3} title={t[2]}>
+      </>
+    ),
+    methodology: (
+      <>
         <ul className="list-disc space-y-1.5 pl-5 text-sm">
           {s.methodology.map((m) => (
             <li key={m}>{m}</li>
           ))}
         </ul>
-      </Section>
-
-      <Section n={4} title={t[3]}>
+      </>
+    ),
+    themes: (
+      <>
         {s.themes.length ? (
           <div className="space-y-5">
             {s.themes.map((th) => (
@@ -154,9 +167,10 @@ export function ReportDocument({ c }: { c: ReportContent }) {
         ) : (
           <Muted>No recurring themes in this report.</Muted>
         )}
-      </Section>
-
-      <Section n={5} title={t[4]}>
+      </>
+    ),
+    frequency: (
+      <>
         <div className="space-y-2">
           {s.frequency.map((f) => (
             <div key={f.code} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 text-sm">
@@ -174,9 +188,10 @@ export function ReportDocument({ c }: { c: ReportContent }) {
             </div>
           ))}
         </div>
-      </Section>
-
-      <Section n={6} title={t[5]}>
+      </>
+    ),
+    quotes: (
+      <>
         <div className="space-y-5">
           {s.quotes.map((q) => (
             <div key={q.code} className="space-y-2">
@@ -192,9 +207,10 @@ export function ReportDocument({ c }: { c: ReportContent }) {
             </div>
           ))}
         </div>
-      </Section>
-
-      <Section n={7} title={t[6]}>
+      </>
+    ),
+    contradictions: (
+      <>
         {s.contradictions.length ? (
           <div className="space-y-4">
             {s.contradictions.map((x, i) => (
@@ -211,9 +227,10 @@ export function ReportDocument({ c }: { c: ReportContent }) {
         ) : (
           <Muted>No contradicting evidence was found.</Muted>
         )}
-      </Section>
-
-      <Section n={8} title={t[7]}>
+      </>
+    ),
+    outliers: (
+      <>
         {s.outliers.length ? (
           <ul className="space-y-3">
             {s.outliers.map((o) => (
@@ -231,9 +248,10 @@ export function ReportDocument({ c }: { c: ReportContent }) {
         ) : (
           <Muted>No single-participant findings.</Muted>
         )}
-      </Section>
-
-      <Section n={9} title={t[8]}>
+      </>
+    ),
+    implications: (
+      <>
         {s.implications.length ? (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -278,23 +296,66 @@ export function ReportDocument({ c }: { c: ReportContent }) {
         ) : (
           <Muted>No implications included.</Muted>
         )}
-      </Section>
-
-      <Section n={10} title={t[9]}>
+      </>
+    ),
+    next_steps: (
+      <>
         <ol className="list-decimal space-y-1.5 pl-5 text-sm">
           {s.next_steps.map((x) => (
             <li key={x}>{x}</li>
           ))}
         </ol>
-      </Section>
-
-      <Section n={11} title={t[10]}>
+      </>
+    ),
+    limitations: (
+      <>
         <ul className="list-disc space-y-1.5 pl-5 text-sm">
           {s.limitations.map((x) => (
             <li key={x}>{x}</li>
           ))}
         </ul>
-      </Section>
+      </>
+    ),
+  };
+  return (
+    <article className="space-y-6 rounded-xl border bg-background p-6 shadow-xs sm:p-10">
+      <header className="space-y-3">
+        <div className="flex flex-wrap gap-2">
+          {c.kind === "approved" ? (
+            <Badge variant="secondary" className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+              Approved report
+            </Badge>
+          ) : (
+            <Badge variant="outline">Draft: not all findings reviewed</Badge>
+          )}
+          {c.run.is_demo ? (
+            <Badge variant="secondary" className="bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+              Offline demo mode
+            </Badge>
+          ) : null}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          {c.project.name} · generated {formatDate(c.generated_at)} · {c.run.provider} ({c.run.model})
+        </p>
+        {c.excluded.sensitive_pending.length ? (
+          <p className="flex items-start gap-2 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:bg-rose-950 dark:text-rose-300">
+            <ShieldAlert className="mt-0.5 size-4 shrink-0" />
+            {c.excluded.sensitive_pending.length} sensitive finding(s) withheld until approved:{" "}
+            {c.excluded.sensitive_pending.map((x) => `${x.code} ${x.name}`).join("; ")}
+          </p>
+        ) : null}
+        {c.excluded.by_choice?.length ? (
+          <p className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
+            Left out by the team: {c.excluded.by_choice.map((x) => `${x.code} ${x.name}`).join("; ")}
+          </p>
+        ) : null}
+      </header>
+
+      {order.map((key) => (
+        <Section key={key} n={numbers.get(key)} title={c.section_labels?.[key] ?? DEFAULT_TITLES[key]}>
+          {blocks[key]}
+        </Section>
+      ))}
     </article>
   );
 }

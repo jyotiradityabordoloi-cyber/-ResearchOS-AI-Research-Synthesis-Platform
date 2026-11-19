@@ -34,6 +34,9 @@ class Settings(BaseSettings):
 
     llm_max_retries: int = 3
     llm_timeout_seconds: float = 120.0
+    # The copilot is interactive: give up sooner and show a labelled rule-based answer.
+    copilot_timeout_seconds: float = 30.0
+    copilot_max_retries: int = 2
 
     # Research rules
     min_interviews_for_synthesis: int = 5

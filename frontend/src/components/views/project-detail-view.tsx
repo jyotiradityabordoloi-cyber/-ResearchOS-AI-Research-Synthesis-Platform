@@ -18,6 +18,7 @@ import { toast } from "sonner";
 
 import { api, type AuditEntry, type Project } from "@/lib/api";
 import { FIELD_LABEL, timeAgo } from "@/lib/format";
+import { useUrlState } from "@/lib/url-state";
 import {
   EmptyState,
   ErrorState,
@@ -46,6 +47,7 @@ export function ProjectDetailView() {
   const router = useRouter();
   const qc = useQueryClient();
   const project = useQuery({ queryKey: ["project", id], queryFn: () => api.projects.get(id) });
+  const [tab, setTab] = useUrlState("tab", "overview");
 
   const remove = useMutation({
     mutationFn: () => api.projects.remove(id),
@@ -96,7 +98,7 @@ export function ProjectDetailView() {
         }
       />
 
-      <Tabs defaultValue="overview" className="gap-6">
+      <Tabs value={tab} onValueChange={setTab} className="gap-6">
         <TabsList className="h-auto max-w-full flex-wrap justify-start">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="interviews">

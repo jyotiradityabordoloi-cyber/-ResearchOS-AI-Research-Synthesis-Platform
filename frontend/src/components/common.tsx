@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
@@ -7,6 +8,7 @@ import type { ReactNode } from "react";
 import { ApiError } from "@/lib/api";
 import { PROJECT_STATUS_LABEL, SYNTHESIS_STATUS_LABEL } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { AnimatedNumber } from "@/components/animated-number";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -38,25 +40,87 @@ export function StatCard({
   hint,
   icon: Icon,
   loading,
+  href,
+  attention,
 }: {
   label: string;
   value: ReactNode;
   hint?: ReactNode;
   icon: LucideIcon;
   loading?: boolean;
+  /** Makes the whole card a link to the view behind the number. */
+  href?: string;
+  /** Tints the icon when the number needs someone's attention. */
+  attention?: boolean;
 }) {
-  return (
-    <Card className="gap-3 px-5 py-4 shadow-xs">
+  const body = (
+    <Card
+      className={cn(
+        "h-full gap-3 px-5 py-4 shadow-xs",
+        href &&
+          "transition-[box-shadow,border-color,transform] duration-150 ease-out group-hover/stat:border-primary/30 group-hover/stat:shadow-md group-active/stat:scale-[0.99]",
+      )}
+    >
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>{label}</span>
-        <Icon className="size-4" />
+        <span
+          className={cn(
+            "flex size-7 items-center justify-center rounded-md bg-muted transition-colors",
+            attention && "bg-amber-50 text-amber-700",
+            href && !attention && "group-hover/stat:bg-primary/10 group-hover/stat:text-primary",
+          )}
+        >
+          <Icon className="size-3.5" />
+        </span>
       </div>
       {loading ? (
         <Skeleton className="h-8 w-16" />
       ) : (
-        <div className="text-3xl font-semibold tracking-tight tabular-nums">{value}</div>
+        <div className="text-3xl font-semibold tracking-tight tabular-nums">
+          {typeof value === "number" ? <AnimatedNumber value={value} /> : value}
+        </div>
       )}
       {hint ? <div className="text-xs text-muted-foreground">{hint}</div> : null}
+    </Card>
+  );
+  if (!href) return body;
+  return (
+    <Link
+      href={href}
+      className="group/stat rounded-xl focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      aria-label={`${label}: open the filtered view`}
+    >
+      {body}
+    </Link>
+  );
+}
+
+/** Card with a title row; the shared frame for dashboard and workspace panels. */
+export function Panel({
+  title,
+  description,
+  action,
+  children,
+  className,
+  bodyClassName,
+}: {
+  title: ReactNode;
+  description?: ReactNode;
+  action?: ReactNode;
+  children: ReactNode;
+  className?: string;
+  bodyClassName?: string;
+}) {
+  return (
+    <Card className={cn("gap-0 py-0 shadow-xs", className)}>
+      <div className="flex items-start justify-between gap-3 border-b px-5 py-3.5">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+          {description ? <p className="mt-0.5 text-xs text-muted-foreground">{description}</p> : null}
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
+      </div>
+      <div className={cn("p-5", bodyClassName)}>{children}</div>
     </Card>
   );
 }

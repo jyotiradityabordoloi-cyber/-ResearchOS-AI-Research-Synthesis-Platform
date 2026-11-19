@@ -1,15 +1,24 @@
 import uuid
+from datetime import UTC, date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user, get_project_or_404
 from app.core.db import get_db
 from app.models import Interview, ResearchProject, User
 from app.models.enums import ProjectStatus
-from app.schemas import InterviewCreate, InterviewFields, InterviewOut, InterviewUpdate
+from app.schemas import (
+    InterviewCreate,
+    InterviewFacets,
+    InterviewFields,
+    InterviewFindings,
+    InterviewOut,
+    InterviewUpdate,
+)
 from app.services import audit
+from app.services.interview_findings import interview_facets, interview_findings
 from app.services.validation import validate_fields
 
 router = APIRouter(tags=["interviews"])
@@ -47,6 +56,10 @@ def list_interviews(
     project_id: uuid.UUID | None = None,
     validation_status: str | None = None,
     q: str | None = Query(default=None, max_length=200),
+    role: str | None = Query(default=None, max_length=200),
+    company_size: str | None = Query(default=None, max_length=100),
+    plan_tier: str | None = Query(default=None, max_length=100),
+    created_on: date | None = Query(default=None, description="UTC day the interview was added"),
     limit: int = Query(default=200, ge=1, le=1000),
     db: Session = Depends(get_db),
 ) -> list[InterviewOut]:
@@ -55,6 +68,15 @@ def list_interviews(
         stmt = stmt.where(Interview.project_id == project_id)
     if validation_status:
         stmt = stmt.where(Interview.validation_status == validation_status)
+    if role:
+        stmt = stmt.where(func.lower(Interview.participant_role) == role.strip().lower())
+    if company_size:
+        stmt = stmt.where(func.lower(Interview.company_size) == company_size.strip().lower())
+    if plan_tier:
+        stmt = stmt.where(func.lower(Interview.plan_tier) == plan_tier.strip().lower())
+    if created_on:
+        start = datetime.combine(created_on, time.min, UTC)
+        stmt = stmt.where(Interview.created_at >= start, Interview.created_at < start + timedelta(days=1))
     if q:
         like = f"%{q.strip()}%"
         stmt = stmt.where(
@@ -68,6 +90,19 @@ def list_interviews(
         )
     rows = db.scalars(stmt.order_by(Interview.created_at.desc()).limit(limit))
     return [to_out(i) for i in rows]
+
+
+# Declared before /api/interviews/{interview_id} so "facets" is not parsed as an id.
+@router.get("/api/interviews/facets", response_model=InterviewFacets)
+def get_interview_facets(project_id: uuid.UUID | None = None, db: Session = Depends(get_db)) -> InterviewFacets:
+    """Distinct roles, company sizes and plan tiers with interview counts."""
+    return interview_facets(db, project_id)
+
+
+@router.get("/api/interviews/{interview_id}/findings", response_model=InterviewFindings)
+def get_interview_findings(interview_id: uuid.UUID, db: Session = Depends(get_db)) -> InterviewFindings:
+    """Pain points, themes and insights the active synthesis run derived from this interview."""
+    return interview_findings(db, _get_interview(db, interview_id))
 
 
 @router.get("/api/projects/{project_id}/interviews", response_model=list[InterviewOut])

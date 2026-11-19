@@ -1,13 +1,16 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Layers, Merge, X } from "lucide-react";
+import { LayoutGrid, Layers, List, Merge, X } from "lucide-react";
 import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { api, type Project } from "@/lib/api";
 import { useChartAnimation } from "@/lib/motion";
 import { percent } from "@/lib/format";
+import { useUrlState } from "@/lib/url-state";
+import { cn } from "@/lib/utils";
+import { ThemeCanvas } from "@/components/canvas/theme-canvas";
 import { EmptyState, ErrorState } from "@/components/common";
 import { MergeThemesDialog } from "@/components/review/theme-dialogs";
 import { SynthesisPanel } from "@/components/themes/synthesis-panel";
@@ -33,11 +36,46 @@ function FrequencyTooltip({ active, payload }: { active?: boolean; payload?: { p
   );
 }
 
+function ViewSwitch({ view, onChange }: { view: string; onChange: (v: string) => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="inline-flex rounded-lg border bg-muted/50 p-0.5" role="radiogroup" aria-label="Themes view">
+        {(
+          [
+            ["canvas", "Canvas", LayoutGrid],
+            ["list", "List", List],
+          ] as const
+        ).map(([value, label, Icon]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={view === value}
+            onClick={() => onChange(value)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-sm transition-[color,background-color,box-shadow,transform] duration-150 ease-out active:scale-[0.97]",
+              view === value ? "bg-background font-medium shadow-xs" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Icon className="size-3.5" /> {label}
+          </button>
+        ))}
+      </div>
+      <p className="hidden text-xs text-muted-foreground sm:block">
+        {view === "canvas"
+          ? "Drag observations between themes. Every change is saved and can be undone."
+          : "Review themes one by one with their full evidence and history."}
+      </p>
+    </div>
+  );
+}
+
 export function ThemesTab({ project }: { project: Project }) {
   const chartMotion = useChartAnimation();
   const [showRejected, setShowRejected] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [merging, setMerging] = useState(false);
+  const [view, setView] = useUrlState("view", "canvas");
   const themes = useQuery({
     queryKey: ["themes", project.id, { showRejected }],
     queryFn: () => api.synthesis.themes(project.id, showRejected),
@@ -58,9 +96,20 @@ export function ThemesTab({ project }: { project: Project }) {
   const reviewed = data.filter((t) => t.status !== "proposed" || t.human_edited).length;
   const selectedThemes = selected.map((id) => data.find((t) => t.id === id)).filter((t) => t !== undefined);
 
+  if (view === "canvas" && data.length) {
+    return (
+      <div className="space-y-6">
+        <SynthesisPanel project={project} reviewedCount={reviewed} />
+        <ViewSwitch view={view} onChange={setView} />
+        <ThemeCanvas project={project} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <SynthesisPanel project={project} reviewedCount={reviewed} />
+      {data.length ? <ViewSwitch view={view} onChange={setView} /> : null}
       {themes.error ? <ErrorState error={themes.error} onRetry={() => themes.refetch()} /> : null}
       {themes.isPending ? (
         <Skeleton className="h-64 w-full" />

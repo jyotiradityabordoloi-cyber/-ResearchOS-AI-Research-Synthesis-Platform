@@ -75,9 +75,14 @@ export interface Project {
   participant_count: number;
   theme_count: number;
   pending_review_count: number;
+  review_total: number;
+  review_done: number;
+  report_count: number;
   ready_for_synthesis: boolean;
+  min_participants: number;
   created_at: string;
   updated_at: string;
+  last_activity_at: string | null;
 }
 
 export interface ProjectInput {
@@ -116,6 +121,45 @@ export interface Interview extends InterviewFields {
   updated_at: string;
 }
 
+export interface FacetValue {
+  value: string;
+  count: number;
+}
+
+export interface InterviewFacets {
+  roles: FacetValue[];
+  company_sizes: FacetValue[];
+  plan_tiers: FacetValue[];
+}
+
+export interface InterviewFindings {
+  synthesised: boolean;
+  pain_points: {
+    id: string;
+    text: string;
+    quote: string | null;
+    quote_verified: boolean;
+    severity: number | null;
+    sensitive_tags: string[];
+    duplicate_count: number;
+    theme_id: string | null;
+    theme_code: string | null;
+    theme_name: string | null;
+  }[];
+  themes: {
+    theme_id: string;
+    code: string;
+    name: string;
+    status: string;
+    frequency: number;
+    participant_count: number;
+    is_outlier: boolean;
+    requires_approval: boolean;
+    quotes: { quote: string; stance: "supporting" | "contradicting"; verified: boolean; note: string }[];
+  }[];
+  insights: { id: string; title: string; status: string; priority: "high" | "medium" | "low"; theme_code: string }[];
+}
+
 export interface ActivityItem {
   kind: string;
   title: string;
@@ -141,6 +185,72 @@ export interface DashboardStats {
     themes: number;
   }[];
   recent_activity: ActivityItem[];
+  sensitive_pending: number;
+  review_counts: Record<"proposed" | "approved" | "rejected", number>;
+  interview_activity: { day: string; valid: number; needs_fixes: number }[];
+  project_progress: ProjectProgress[];
+  review_queue: ReviewQueueItem[];
+  top_findings: FindingItem[];
+  recent_runs: RunItem[];
+}
+
+export interface ProjectProgress {
+  project_id: string;
+  project_name: string;
+  status: string;
+  synthesis_status: string;
+  interviews: number;
+  valid_interviews: number;
+  participants: number;
+  min_participants: number;
+  themes: number;
+  review_total: number;
+  review_done: number;
+  reports: number;
+  last_activity_at: string;
+}
+
+export interface ReviewQueueItem {
+  kind: "theme" | "insight";
+  id: string;
+  project_id: string;
+  project_name: string;
+  code: string | null;
+  title: string;
+  severity: number;
+  frequency: number;
+  requires_approval: boolean;
+  is_outlier: boolean;
+  has_contradictions: boolean;
+}
+
+export interface FindingItem {
+  id: string;
+  project_id: string;
+  project_name: string;
+  theme_code: string | null;
+  title: string;
+  implication: string;
+  priority: "high" | "medium" | "low";
+  frequency: number;
+  severity: number;
+  strategic_relevance: number;
+  status: string;
+}
+
+export interface RunItem {
+  id: string;
+  project_id: string;
+  project_name: string;
+  status: string;
+  stage: string;
+  provider: string;
+  model: string;
+  started_at: string;
+  finished_at: string | null;
+  themes: number | null;
+  participants: number | null;
+  error: string | null;
 }
 
 export interface AuditEntry {
@@ -266,6 +376,24 @@ export interface Theme {
   evidence: Evidence[];
 }
 
+export type Stance = "supporting" | "contradicting";
+
+/** A pain point extracted by synthesis: the unit you drag around on the theme canvas. */
+export interface Observation {
+  id: string;
+  interview_id: string;
+  participant_id: string;
+  participant_role: string;
+  company_size: string;
+  plan_tier: string;
+  text: string;
+  quote: string | null;
+  quote_verified: boolean;
+  severity: number | null;
+  sensitive_tags: string[];
+  duplicate_count: number;
+}
+
 export type Decision = "approve" | "reject" | "reopen";
 export type PriorityBand = "high" | "medium" | "low";
 
@@ -314,6 +442,60 @@ export interface Insight {
   computed_priority: PriorityBand;
   effective_priority: PriorityBand;
   is_overridden: boolean;
+  theme_name: string | null;
+  participant_count: number;
+  evidence_count: number;
+  contradicting_count: number;
+  comment_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type SensitiveTag = "pricing" | "churn" | "competitive_switching";
+
+export interface CopilotCitation {
+  key: string;
+  kind: "theme" | "evidence" | "insight" | "interview";
+  label: string;
+  theme_id: string | null;
+  interview_id: string | null;
+  insight_id: string | null;
+  participant_id: string | null;
+  quote: string | null;
+  stance: string | null;
+}
+
+export interface CopilotAnswer {
+  answer: string;
+  citations: CopilotCitation[];
+  /** ai: written by the model. demo: no model configured. fallback: the model failed. */
+  mode: "ai" | "demo" | "fallback";
+  provider: string;
+  model: string;
+  notice: string | null;
+  theme_code: string | null;
+  interview_participant: string | null;
+  evidence_in_context: number;
+}
+
+export interface CopilotAsk {
+  question: string;
+  theme_id?: string;
+  insight_id?: string;
+  interview_id?: string;
+  history?: { role: "user" | "assistant"; content: string }[];
+}
+
+export interface InsightEvidence {
+  theme: {
+    id: string;
+    code: string;
+    name: string;
+    status: string;
+    participant_ids: string[];
+    total_participants: number;
+  } | null;
+  evidence: (Evidence & { participant_role: string; company_size: string; plan_tier: string })[];
 }
 
 export interface ReportSummary {
@@ -392,7 +574,43 @@ export interface ReportContent {
     next_steps: string[];
     limitations: string[];
   };
-  excluded: { sensitive_pending: { code: string; name: string; tags: string[] }[]; unreviewed: number; rejected: number };
+  excluded: {
+    sensitive_pending: { code: string; name: string; tags: string[] }[];
+    unreviewed: number;
+    rejected: number;
+    by_choice?: { code: string; name: string }[];
+  };
+  /** Builder reports only; older reports render all eleven sections. */
+  included_sections?: ReportSectionKey[];
+  section_labels?: Record<ReportSectionKey, string>;
+  summary?: { text: string; generated: string; edited: boolean };
+  options?: { sections: ReportSectionKey[]; excluded_theme_ids: string[] };
+}
+
+export type ReportSectionKey =
+  | "summary"
+  | "objective"
+  | "participants"
+  | "methodology"
+  | "themes"
+  | "frequency"
+  | "quotes"
+  | "contradictions"
+  | "outliers"
+  | "implications"
+  | "next_steps"
+  | "limitations";
+
+export interface ReportRequest {
+  kind: "draft" | "approved";
+  title?: string;
+  options?: { sections?: ReportSectionKey[]; excluded_theme_ids?: string[]; executive_summary?: string | null };
+}
+
+export interface ReportPreview {
+  title: string;
+  content: ReportContent;
+  markdown: string;
 }
 
 export interface Report extends ReportSummary {
@@ -479,8 +697,19 @@ export const api = {
   },
 
   interviews: {
-    list: (params: { project_id?: string; validation_status?: string; q?: string } = {}) =>
-      request<Interview[]>(`/api/interviews${qs(params)}`),
+    list: (
+      params: {
+        project_id?: string;
+        validation_status?: string;
+        q?: string;
+        role?: string;
+        company_size?: string;
+        plan_tier?: string;
+        created_on?: string;
+      } = {},
+    ) => request<Interview[]>(`/api/interviews${qs(params)}`),
+    facets: (projectId?: string) => request<InterviewFacets>(`/api/interviews/facets${qs({ project_id: projectId })}`),
+    findings: (id: string) => request<InterviewFindings>(`/api/interviews/${id}/findings`),
     forProject: (projectId: string) => request<Interview[]>(`/api/projects/${projectId}/interviews`),
     get: (id: string) => request<Interview>(`/api/interviews/${id}`),
     create: (projectId: string, data: Partial<InterviewFields> & { raw_content?: string }) =>
@@ -553,15 +782,52 @@ export const api = {
       request<Insight>(`/api/insights/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
     reviewInsight: (id: string, data: ReviewPayload) =>
       request<Insight>(`/api/insights/${id}/review`, { method: "POST", body: JSON.stringify(data) }),
+    insightEvidence: (id: string) => request<InsightEvidence>(`/api/insights/${id}/evidence`),
+    insightHistory: (id: string) => request<AuditEntry[]>(`/api/insights/${id}/history`),
+    commentOnInsight: (id: string, text: string) =>
+      request<AuditEntry>(`/api/insights/${id}/comments`, { method: "POST", body: JSON.stringify({ text }) }),
+    flagSensitive: (id: string, tags: SensitiveTag[], reason: string) =>
+      request<Insight>(`/api/insights/${id}/sensitive`, { method: "POST", body: JSON.stringify({ tags, reason }) }),
     createInsight: (
       projectId: string,
       data: { title: string; statement?: string; implication?: string; theme_id?: string; severity: number; strategic_relevance: number; pm_comment?: string },
     ) => request<Insight>(`/api/projects/${projectId}/insights`, { method: "POST", body: JSON.stringify(data) }),
   },
 
+  copilot: {
+    ask: (projectId: string, body: CopilotAsk) =>
+      request<CopilotAnswer>(`/api/projects/${projectId}/copilot`, { method: "POST", body: JSON.stringify(body) }),
+  },
+
+  canvas: {
+    observations: (projectId: string) => request<Observation[]>(`/api/projects/${projectId}/observations`),
+    createTheme: (projectId: string, data: { name: string; description?: string }) =>
+      request<Theme>(`/api/projects/${projectId}/themes`, { method: "POST", body: JSON.stringify(data) }),
+    deleteTheme: (id: string) =>
+      request<{ evidence_returned_to: string | null }>(`/api/themes/${id}`, { method: "DELETE" }),
+    attach: (themeId: string, painPointId: string, stance: Stance = "supporting") =>
+      request<{ evidence: Evidence; moved_from_theme_id: string | null }>(`/api/themes/${themeId}/observations`, {
+        method: "POST",
+        body: JSON.stringify({ pain_point_id: painPointId, stance }),
+      }),
+    detach: (evidenceId: string) =>
+      request<{ pain_point_id: string | null; interview_id: string; quote: string; stance: Stance }>(
+        `/api/evidence/${evidenceId}`,
+        { method: "DELETE" },
+      ),
+    setStance: (evidenceId: string, stance: Stance) =>
+      request<Theme>(`/api/evidence/${evidenceId}`, { method: "PATCH", body: JSON.stringify({ stance }) }),
+    unmerge: (themeId: string) =>
+      request<{ restored_theme_ids: string[] }>(`/api/themes/${themeId}/unmerge`, { method: "POST" }),
+  },
+
   reports: {
     generate: (projectId: string, kind: "draft" | "approved", title?: string) =>
       request<Report>(`/api/projects/${projectId}/reports`, { method: "POST", body: JSON.stringify({ kind, title }) }),
+    create: (projectId: string, body: ReportRequest) =>
+      request<Report>(`/api/projects/${projectId}/reports`, { method: "POST", body: JSON.stringify(body) }),
+    preview: (projectId: string, body: ReportRequest) =>
+      request<ReportPreview>(`/api/projects/${projectId}/reports/preview`, { method: "POST", body: JSON.stringify(body) }),
     forProject: (projectId: string) => request<ReportSummary[]>(`/api/projects/${projectId}/reports`),
     list: () => request<ReportSummary[]>("/api/reports"),
     get: (id: string) => request<Report>(`/api/reports/${id}`),

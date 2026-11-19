@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BadgeCheck, FileText, Loader2, NotebookPen } from "lucide-react";
+import Link from "next/link";
+import { FileText, LayoutTemplate, Loader2, NotebookPen } from "lucide-react";
 import { toast } from "sonner";
 
 import { api, type Project } from "@/lib/api";
@@ -43,6 +44,10 @@ export function ReportsTab({ project }: { project: Project }) {
             <div className="max-w-2xl space-y-1">
               <p className="font-medium">Research report</p>
               <p className="text-sm text-muted-foreground">
+                Use the builder to choose sections and themes, review sensitive findings and write the executive summary
+                with a live preview. A quick draft uses every section.
+              </p>
+              <p className="text-sm text-muted-foreground">
                 A draft includes approved and not-yet-reviewed findings. An approved report includes only approved
                 findings and marks the project as completed. Sensitive findings (pricing, churn, competitive switching)
                 appear only once approved.
@@ -61,28 +66,19 @@ export function ReportsTab({ project }: { project: Project }) {
                 ) : (
                   <NotebookPen className="size-4" />
                 )}
-                Generate draft
+                Quick draft
               </Button>
-              <Button
-                disabled={!approved || generate.isPending}
-                onClick={() => {
-                  if (confirm("Generate an approved report from approved findings only? The project will be marked completed."))
-                    generate.mutate("approved");
-                }}
-              >
-                {generate.isPending && generate.variables === "approved" ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <BadgeCheck className="size-4" />
-                )}
-                Generate approved report
+              <Button asChild disabled={!hasSynthesis}>
+                <Link href={`/projects/${project.id}/reports/new`} aria-disabled={!hasSynthesis} className={hasSynthesis ? undefined : "pointer-events-none opacity-50"}>
+                  <LayoutTemplate className="size-4" /> Open report builder
+                </Link>
               </Button>
             </div>
           </div>
           {!hasSynthesis ? (
             <p className="text-sm text-muted-foreground">Run synthesis on the Themes tab first.</p>
           ) : !approved ? (
-            <p className="text-sm text-muted-foreground">Approve at least one theme to generate an approved report.</p>
+            <p className="text-sm text-muted-foreground">Approve at least one theme to build an approved report.</p>
           ) : null}
         </CardContent>
       </Card>

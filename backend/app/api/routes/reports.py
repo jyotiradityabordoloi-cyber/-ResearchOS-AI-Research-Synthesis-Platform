@@ -11,10 +11,17 @@ from app.api.deps import get_current_user, get_project_or_404
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.models import ResearchProject, ResearchReport, User
-from app.schemas import ReportCreate, ReportOut, ReportSummary, RepositoryFacets, RepositoryHit
+from app.schemas import ReportCreate, ReportOut, ReportPreview, ReportSummary, RepositoryFacets, RepositoryHit
 from app.services import repository
 from app.services.pdf import render_pdf
-from app.services.report import ReportError, generate_report
+from app.services.report import (
+    ReportError,
+    ReportOptions,
+    build_report_content,
+    default_title,
+    generate_report,
+    to_markdown,
+)
 
 router = APIRouter(tags=["reports"])
 
@@ -38,6 +45,28 @@ def _filename(title: str, ext: str) -> str:
 # --- Reports -----------------------------------------------------------------------
 
 
+def _options(payload: ReportCreate) -> ReportOptions:
+    o = payload.options
+    if o is None:
+        return ReportOptions()
+    return ReportOptions(sections=o.sections, excluded_theme_ids=o.excluded_theme_ids, executive_summary=o.executive_summary)
+
+
+@router.post("/api/projects/{project_id}/reports/preview", response_model=ReportPreview)
+def preview_report(
+    payload: ReportCreate,
+    project: ResearchProject = Depends(get_project_or_404),
+    db: Session = Depends(get_db),
+) -> ReportPreview:
+    """Build a report exactly as it would be saved, without saving it (report builder preview)."""
+    try:
+        content = build_report_content(db, project, payload.kind, _options(payload))
+    except ReportError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    title = (payload.title or "").strip() or default_title(project, payload.kind)
+    return ReportPreview(title=title, content=content, markdown=to_markdown(content, title))
+
+
 @router.post("/api/projects/{project_id}/reports", response_model=ReportOut, status_code=201)
 def create_report(
     payload: ReportCreate,
@@ -50,7 +79,7 @@ def create_report(
     Sensitive findings are never included until a person has approved them.
     """
     try:
-        report = generate_report(db, project, payload.kind, payload.title, user)
+        report = generate_report(db, project, payload.kind, payload.title, user, _options(payload))
     except ReportError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return ReportOut.model_validate(report).model_copy(update={"project_name": project.name})

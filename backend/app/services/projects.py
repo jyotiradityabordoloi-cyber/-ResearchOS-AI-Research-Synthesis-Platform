@@ -7,7 +7,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.models import Insight, Interview, ResearchProject, Theme
+from app.models import HumanReview, Insight, Interview, ResearchProject, ResearchReport, Theme
 from app.models.enums import ReviewStatus, ValidationStatus
 from app.schemas import ProjectOut
 
@@ -88,6 +88,21 @@ def project_aggregates(db: Session, project_ids: list[uuid.UUID]) -> dict[uuid.U
         .group_by(Insight.project_id),
     )
 
+    review = _review_progress(db, project_ids)
+    reports = _count_by_project(
+        db,
+        select(ResearchReport.project_id, func.count())
+        .where(ResearchReport.project_id.in_(project_ids))
+        .group_by(ResearchReport.project_id),
+    )
+    last_audit = dict(
+        db.execute(
+            select(HumanReview.project_id, func.max(HumanReview.created_at))
+            .where(HumanReview.project_id.in_(project_ids))
+            .group_by(HumanReview.project_id)
+        ).all()
+    )
+
     for pid in project_ids:
         by_status = agg[pid].get("by_status", {})
         agg[pid] = {
@@ -97,8 +112,32 @@ def project_aggregates(db: Session, project_ids: list[uuid.UUID]) -> dict[uuid.U
             "participant_count": participants.get(pid, 0),
             "theme_count": themes.get(pid, 0),
             "pending_review_count": pending_themes.get(pid, 0) + pending_insights.get(pid, 0),
+            "review_total": review[pid][0],
+            "review_done": review[pid][1],
+            "report_count": reports.get(pid, 0),
+            "last_audit_at": last_audit.get(pid),
         }
     return agg
+
+
+_REVIEWABLE = (ReviewStatus.PROPOSED, ReviewStatus.APPROVED, ReviewStatus.REJECTED)
+
+
+def _review_progress(db: Session, project_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[int]]:
+    """[reviewable, decided] counts over each project's live themes and insights."""
+    totals: dict[uuid.UUID, list[int]] = defaultdict(lambda: [0, 0])
+    for model in (Theme, Insight):
+        join = and_(model.project_id == ResearchProject.id, live_filter(model))
+        for pid, status, n in db.execute(
+            select(model.project_id, model.status, func.count())
+            .join(ResearchProject, join)
+            .where(model.project_id.in_(project_ids), model.status.in_(_REVIEWABLE))
+            .group_by(model.project_id, model.status)
+        ).all():
+            totals[pid][0] += n
+            if status != ReviewStatus.PROPOSED:
+                totals[pid][1] += n
+    return totals
 
 
 def to_out(project: ResearchProject, agg: dict) -> ProjectOut:
@@ -109,6 +148,8 @@ def to_out(project: ResearchProject, agg: dict) -> ProjectOut:
             **agg,
             "owner_name": project.owner.name if project.owner else None,
             "ready_for_synthesis": agg.get("participant_count", 0) >= minimum,
+            "min_participants": minimum,
+            "last_activity_at": max(x for x in (project.updated_at, agg.get("last_audit_at")) if x is not None),
         }
     )
 

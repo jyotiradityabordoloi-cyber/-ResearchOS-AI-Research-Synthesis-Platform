@@ -8,6 +8,11 @@ export function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
+/** "2026-11-19" (a UTC calendar day from the API) -> "19 Nov". */
+export function formatDay(day: string): string {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
+}
+
 export function percent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }

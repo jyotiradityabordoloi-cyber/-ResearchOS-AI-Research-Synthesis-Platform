@@ -111,3 +111,29 @@ def test_embedder_batches_truncates_and_normalises():
     assert len(vecs) == 150 and len(seen) == 2  # batches of 100
     assert seen[0]["requests"][0]["outputDimensionality"] == EMBEDDING_DIM
     assert abs(sum(x * x for x in vecs[0]) - 1.0) < 1e-6
+
+
+def test_timeout_switches_to_fallback_only_when_asked():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if "gemini-flash-latest" in str(request.url):
+            raise httpx.ReadTimeout("slow", request=request)
+        return httpx.Response(200, json=answer(json.dumps(GOOD)))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    p = GeminiProvider(
+        "k", "gemini-flash-latest", 5, rpm=0, client=client, backoff_seconds=0,
+        fallback_model="gemini-flash-lite-latest", max_retries=2,
+    )
+    # Background synthesis keeps waiting on the main model.
+    with pytest.raises(LLMError):
+        p.generate_json(ThemeNaming, "s", "u")
+    assert all("flash-latest" in c for c in calls) and p.model == "gemini-flash-latest"
+
+    # The interactive copilot moves on to the faster fallback.
+    calls.clear()
+    p.switch_on_timeout = True
+    assert p.generate_json(ThemeNaming, "s", "u").name == "Slow dashboards"
+    assert p.model == "gemini-flash-lite-latest" and "flash-lite-latest" in calls[-1]

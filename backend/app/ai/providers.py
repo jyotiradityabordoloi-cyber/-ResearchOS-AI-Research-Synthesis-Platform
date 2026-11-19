@@ -241,6 +241,12 @@ class GeminiProvider(LLMProvider):
         self.client = client or httpx.Client(timeout=timeout)
         self.headers = {"x-goog-api-key": api_key}
         self.throttle = RequestThrottle(rpm)
+        # Interactive callers (the copilot) also give up on a slow model, not only an overloaded one.
+        self.switch_on_timeout = False
+
+    def _use_fallback(self) -> None:
+        self.model, self.fallback_model = self.fallback_model, ""
+        self.url = f"{self.base_url}/models/{self.model}:generateContent"
 
     def _chat(self, messages: list[dict[str, str]], json_schema: dict) -> str:
         system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
@@ -257,13 +263,17 @@ class GeminiProvider(LLMProvider):
         self.throttle.wait()
         try:
             resp = self.client.post(self.url, headers=self.headers, json=body)
+        except httpx.TimeoutException as exc:
+            if self.switch_on_timeout and self.fallback_model:
+                log.warning("Gemini model %s timed out; switching to %s", self.model, self.fallback_model)
+                self._use_fallback()
+            raise TransientLLMError(f"Gemini request failed: {exc.__class__.__name__}: {exc}") from exc
         except httpx.HTTPError as exc:
             raise TransientLLMError(f"Gemini request failed: {exc.__class__.__name__}: {exc}") from exc
         if resp.status_code == 503 and self.fallback_model:
             # The model is overloaded ("high demand"): switch to the fallback for the rest of the run.
             log.warning("Gemini model %s overloaded; switching to %s", self.model, self.fallback_model)
-            self.model, self.fallback_model = self.fallback_model, ""
-            self.url = f"{self.base_url}/models/{self.model}:generateContent"
+            self._use_fallback()
             raise TransientLLMError("Gemini model overloaded; retrying with the fallback model.", retry_after=1.0)
         if resp.status_code == 404:
             raise LLMError(
